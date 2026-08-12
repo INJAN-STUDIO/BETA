@@ -11,13 +11,11 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 async def read_index():
-    return FileResponse("static/index.html")
+    # Using an absolute path to ensure Render finds the file correctly
+    file_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    return FileResponse(file_path)
 
 # Root route for API health check
 @app.get("/api/health")
 async def health():
     return {"status": "online", "system": "B.E.T.A ready"}
-
-# We will add modular route imports here later:
-# from app.routes import chat
-# app.include_router(chat.router)
