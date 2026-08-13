@@ -2,23 +2,6 @@ const chatBox = document.getElementById('chat-container');
 const input = document.getElementById('user-input');
 
 document.getElementById('menu-btn').addEventListener('click', () => document.getElementById('sidebar').classList.add('open'));
-document.getElementById('close-menu').addEventListener('click', () => document.getElementById('sidebar').classList.remove('open'));
-
-document.getElementById('send-btn').addEventListener('click', sendMessage);
-
-// Handle Enter key for textarea
-input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-    }
-});
-
-// Auto-resize textarea
-input.addEventListener('input', function() {
-    this.style.height = 'auto';
-    this.style.height = (this.scrollHeight) + 'px';
-});
 
 async function sendMessage() {
     const text = input.value.trim();
@@ -28,7 +11,12 @@ async function sendMessage() {
     input.value = '';
     input.style.height = 'auto';
 
-    const aiBubble = addBubble("...", 'ai');
+    // Thinking indicator
+    const thinking = document.createElement('div');
+    thinking.className = 'dots';
+    thinking.innerText = 'B.E.T.A is thinking';
+    chatBox.appendChild(thinking);
+    chatBox.scrollTop = chatBox.scrollHeight;
 
     try {
         const response = await fetch('/api/chat', {
@@ -37,10 +25,15 @@ async function sendMessage() {
             body: JSON.stringify({ message: text })
         });
         const data = await response.json();
-        aiBubble.innerText = '';
+        
+        chatBox.removeChild(thinking);
+        
+        // Add AI bubble and stream text with spaces
+        const aiBubble = addBubble("", 'ai');
         streamText(aiBubble, data.response);
     } catch (e) {
-        aiBubble.innerText = "Error: B.E.T.A. is unreachable.";
+        chatBox.removeChild(thinking);
+        addBubble("Error reaching B.E.T.A.", 'ai');
     }
 }
 
@@ -56,9 +49,14 @@ function addBubble(text, className) {
 function streamText(element, text) {
     let i = 0;
     const interval = setInterval(() => {
-        element.innerText += text.charAt(i);
+        // Ensure spaces are kept
+        element.innerText = text.substring(0, i + 1);
         i++;
         chatBox.scrollTop = chatBox.scrollHeight;
         if (i >= text.length) clearInterval(interval);
-    }, 25);
+    }, 20);
 }
+
+document.getElementById('send-btn').addEventListener('click', sendMessage);
+input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }});
+input.addEventListener('input', function() { this.style.height = 'auto'; this.style.height = (this.scrollHeight) + 'px'; });
