@@ -7,7 +7,7 @@ document.getElementById('send-btn').addEventListener('click', async () => {
     appendMessage("You", message);
     input.value = '';
     
-    // Send to our new backend
+    // Send to our backend
     try {
         const response = await fetch('/api/chat', {
             method: 'POST',
@@ -31,7 +31,8 @@ document.getElementById('send-btn').addEventListener('click', async () => {
 });
 
 function appendMessage(sender, text) {
-    const chatBox = document.getElementById('chat-box');
+    // UPDATED to look for 'chat-container' instead of 'chat-box'
+    const chatBox = document.getElementById('chat-container');
     const msgDiv = document.createElement('div');
     msgDiv.innerHTML = `<strong>${sender}:</strong> ${text}`;
     chatBox.appendChild(msgDiv);
