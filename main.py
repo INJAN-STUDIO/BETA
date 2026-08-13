@@ -2,8 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 import os
-import asyncio
-from app import brain  # Import the brain we just created
+from brain_logic import brain  # Import from brain_logic instead of app
 
 # Create the FastAPI app
 app = FastAPI(title="B.E.T.A. Backend")

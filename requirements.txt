@@ -2,3 +2,11 @@ fastapi
 uvicorn
 httpx
 python-dotenv
+requests
+sentence-transformers
+numpy
+edge-tts
+beautifulsoup4
+psutil
+PyPDF2
+python-docx
