@@ -1,7 +1,10 @@
 const chatBox = document.getElementById('chat-container');
 const input = document.getElementById('user-input');
+const sidebar = document.getElementById('sidebar');
 
-document.getElementById('menu-btn').addEventListener('click', () => document.getElementById('sidebar').classList.add('open'));
+document.getElementById('menu-btn').addEventListener('click', () => sidebar.classList.add('open'));
+// FIX: Close sidebar button logic
+document.getElementById('close-menu').addEventListener('click', () => sidebar.classList.remove('open'));
 
 async function sendMessage() {
     const text = input.value.trim();
@@ -11,7 +14,6 @@ async function sendMessage() {
     input.value = '';
     input.style.height = 'auto';
 
-    // Thinking indicator
     const thinking = document.createElement('div');
     thinking.className = 'dots';
     thinking.innerText = 'B.E.T.A is thinking';
@@ -27,8 +29,6 @@ async function sendMessage() {
         const data = await response.json();
         
         chatBox.removeChild(thinking);
-        
-        // Add AI bubble and stream text with spaces
         const aiBubble = addBubble("", 'ai');
         streamText(aiBubble, data.response);
     } catch (e) {
@@ -49,7 +49,6 @@ function addBubble(text, className) {
 function streamText(element, text) {
     let i = 0;
     const interval = setInterval(() => {
-        // Ensure spaces are kept
         element.innerText = text.substring(0, i + 1);
         i++;
         chatBox.scrollTop = chatBox.scrollHeight;
