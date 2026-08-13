@@ -3,7 +3,6 @@ uvicorn
 httpx
 python-dotenv
 requests
-sentence-transformers
 numpy
 edge-tts
 beautifulsoup4
