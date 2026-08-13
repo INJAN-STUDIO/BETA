@@ -7,19 +7,20 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div id="sidebar">
-        <div class="sidebar-item">New Chat</div>
-    </div>
-    <div id="main-content">
+    <div id="app-container">
         <header>
-            <h1>B.E.T.A.</h1>
+            <div class="logo">G</div>
+            <div class="status">
+                <h1>B.E.T.A.</h1>
+                <p>Online.</p>
+            </div>
         </header>
-        <div id="chat-container">
-            <!-- Messages will appear here -->
-        </div>
+        
+        <div id="chat-container"></div>
+        
         <div id="input-area">
-            <input type="text" id="user-input" placeholder="How can B.E.T.A. help you today?">
-            <button id="send-btn">Send</button>
+            <input type="text" id="user-input" placeholder="Type a command or question...">
+            <button id="send-btn">➤</button>
         </div>
     </div>
     <script src="/static/script.js"></script>

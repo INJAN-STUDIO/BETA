@@ -1,64 +1,58 @@
 :root {
-    --bg-main: #1a1a1a;
-    --bg-sidebar: #121212;
-    --bg-input: #2a2a2a;
-    --text-primary: #e0e0e0;
-    --text-muted: #888888;
+    --bg-dark: #0a1f26;
+    --bg-glass: rgba(10, 31, 38, 0.7);
+    --accent-teal: #00e5ff;
+    --text-light: #ffffff;
 }
 
 body {
+    background: linear-gradient(135deg, #0a1f26, #004d40);
+    color: var(--text-light);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     margin: 0;
     display: flex;
+    justify-content: center;
+    align-items: center;
     height: 100vh;
-    background-color: var(--bg-main);
-    color: var(--text-primary);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
-#sidebar {
-    width: 260px;
-    background-color: var(--bg-sidebar);
-    padding: 20px;
-}
-
-#main-content {
-    flex-grow: 1;
+#app-container {
+    width: 375px;
+    height: 667px;
+    background: var(--bg-glass);
+    backdrop-filter: blur(20px);
+    border-radius: 40px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
     display: flex;
     flex-direction: column;
-    align-items: center;
     padding: 20px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
 }
 
-#chat-container {
-    flex-grow: 1;
-    width: 100%;
-    max-width: 800px;
-    overflow-y: auto;
+header { display: flex; align-items: center; gap: 15px; margin-bottom: 20px; }
+.logo { width: 50px; height: 50px; background: linear-gradient(45deg, #00e5ff, #0060e0); border-radius: 15px; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+
+#chat-container { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 15px; }
+
+.bubble {
+    padding: 12px 18px;
+    border-radius: 20px;
+    max-width: 80%;
+    font-size: 14px;
+    line-height: 1.4;
+    word-wrap: break-word;
 }
 
-#input-area {
-    width: 100%;
-    max-width: 800px;
-    display: flex;
-    gap: 10px;
-    padding: 10px;
-    background-color: var(--bg-input);
-    border-radius: 8px;
-}
+.bubble.user { background: var(--accent-teal); color: #000; align-self: flex-end; border-radius: 20px 20px 0 20px; }
+.bubble.bot { background: rgba(255,255,255,0.1); color: #fff; align-self: flex-start; border-radius: 20px 20px 20px 0; }
 
-#user-input {
-    flex-grow: 1;
-    background: transparent;
-    border: none;
-    color: var(--text-primary);
-    outline: none;
+#input-area { 
+    background: rgba(0,0,0,0.2); 
+    padding: 10px; 
+    border-radius: 30px; 
+    display: flex; 
+    align-items: center; 
 }
-
-button {
-    background: #4a4a4a;
-    color: white;
-    border: none;
-    padding: 5px 15px;
-    border-radius: 4px;
-    cursor: pointer;
-}
+#user-input { flex: 1; background: transparent; border: none; color: white; padding: 10px; outline: none; }
+#send-btn { background: var(--accent-teal); border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; transition: 0.3s; }
+#send-btn:hover { box-shadow: 0 0 15px var(--accent-teal); }
