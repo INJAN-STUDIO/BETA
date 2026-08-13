@@ -1,22 +1,24 @@
 const chatBox = document.getElementById('chat-container');
 const input = document.getElementById('user-input');
-const menuBtn = document.getElementById('menu-btn');
-const sidebar = document.getElementById('sidebar');
 
-// Sidebar toggle
-menuBtn.addEventListener('click', () => sidebar.classList.add('open'));
-document.getElementById('close-menu').addEventListener('click', () => sidebar.classList.remove('open'));
+// Menu toggle
+document.getElementById('menu-btn').addEventListener('click', () => document.getElementById('sidebar').classList.add('open'));
+document.getElementById('close-menu').addEventListener('click', () => document.getElementById('sidebar').classList.remove('open'));
 
+// Send message (Click & Enter)
 document.getElementById('send-btn').addEventListener('click', sendMessage);
+input.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
 
 async function sendMessage() {
-    const text = input.value;
+    const text = input.value.trim();
     if (!text) return;
 
-    appendMessage("You", text, 'user');
+    // UI: Add User Message
+    addBubble(text, 'user');
     input.value = '';
-    
-    document.getElementById('thinking-indicator').classList.remove('hidden');
+
+    // UI: Add AI Placeholder
+    const aiBubble = addBubble("...", 'ai');
 
     try {
         const response = await fetch('/api/chat', {
@@ -26,31 +28,29 @@ async function sendMessage() {
         });
         const data = await response.json();
         
-        document.getElementById('thinking-indicator').classList.add('hidden');
-        streamMessage("B.E.T.A", data.response);
+        // Remove placeholder and stream response
+        aiBubble.innerText = '';
+        streamText(aiBubble, data.response);
     } catch (e) {
-        document.getElementById('thinking-indicator').classList.add('hidden');
+        aiBubble.innerText = "Error: B.E.T.A. is offline.";
     }
 }
 
-function appendMessage(sender, text, className) {
+function addBubble(text, className) {
     const div = document.createElement('div');
     div.className = `bubble ${className}`;
     div.innerText = text;
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
+    return div;
 }
 
-function streamMessage(sender, text) {
-    const div = document.createElement('div');
-    div.className = 'bubble ai';
-    chatBox.appendChild(div);
-    
+function streamText(element, text) {
     let i = 0;
     const interval = setInterval(() => {
-        div.innerText += text.charAt(i);
+        element.innerText += text.charAt(i);
         i++;
         chatBox.scrollTop = chatBox.scrollHeight;
         if (i >= text.length) clearInterval(interval);
-    }, 30);
+    }, 25);
 }
