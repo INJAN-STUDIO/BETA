@@ -8,28 +8,25 @@
 </head>
 <body>
     <div id="app-container">
-        <!-- Hamburger Menu -->
-        <div id="menu-overlay"></div>
+        <!-- Sidebar -->
         <nav id="sidebar">
             <button id="close-menu">×</button>
             <div class="sidebar-item">New Chat</div>
-            <div class="sidebar-item">History</div>
         </nav>
 
+        <!-- Header -->
         <header>
             <button id="menu-btn">☰</button>
-            <h1>B.E.T.A.</h1>
-            <div class="status">Online</div>
+            <img id="header-avatar" src="/static/avatar.jpeg" alt="Avatar">
         </header>
 
         <div id="chat-container">
-            <!-- Messages will appear here -->
+            <!-- Messages -->
         </div>
 
-        <div id="thinking-indicator" class="hidden">B.E.T.A. is thinking...</div>
-
+        <!-- Input -->
         <div id="input-area">
-            <input type="text" id="user-input" placeholder="Type a command or question...">
+            <textarea id="user-input" rows="1" placeholder="Type a command..."></textarea>
             <button id="send-btn">➔</button>
         </div>
     </div>
