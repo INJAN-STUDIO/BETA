@@ -93,7 +93,17 @@ class Brain:
                 .execute()
             )
             history = response.data[::-1]
-            return [{"role": item["role"], "content": item["content"]} for item in history]
+            cleaned = []
+            for item in history:
+                role = item.get("role")
+                content = item.get("content")
+                # Defensive: only allow plain user/assistant text turns into the
+                # replayed history. Any stray role (e.g. "tool") or empty/non-string
+                # content left over from earlier testing will break Groq's request
+                # validation for every future turn, not just the one that caused it.
+                if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+                    cleaned.append({"role": role, "content": content})
+            return cleaned
         except Exception as e:
             logger.error(f"Supabase history load failed: {e}")
             return []
@@ -117,10 +127,35 @@ class Brain:
             timeout=20.0,
         )
         if response.status_code >= 400:
-            # Log the actual reason Groq rejected the request, not just "400"
             logger.error(f"Groq {response.status_code} response body: {response.text}")
         response.raise_for_status()
         return response.json()
+
+    async def _call_groq_safe(self, messages, client, allow_tools=True):
+        """
+        Wraps _call_groq to handle Groq's known 'tool_use_failed' flakiness with
+        Llama 3.3: the model occasionally emits a malformed tool-call format
+        (e.g. <function=web_search={...}</function>) instead of valid JSON, which
+        Groq rejects with a 400. This is model output flakiness, not a request
+        bug, so a single retry resolves it most of the time. If tools keep
+        failing, fall back to a plain answer with tools disabled rather than
+        surfacing a raw error to the user.
+        """
+        try:
+            return await self._call_groq(messages, client, allow_tools=allow_tools)
+        except Exception as e:
+            body = getattr(getattr(e, "response", None), "text", "") or ""
+            if allow_tools and "tool_use_failed" in body:
+                logger.warning("tool_use_failed — retrying once with tools enabled")
+                try:
+                    return await self._call_groq(messages, client, allow_tools=True)
+                except Exception as e2:
+                    body2 = getattr(getattr(e2, "response", None), "text", "") or ""
+                    if "tool_use_failed" in body2:
+                        logger.warning("tool_use_failed again — falling back without tools")
+                        return await self._call_groq(messages, client, allow_tools=False)
+                    raise
+            raise
 
     async def chat(self, user_message):
         history = self.load_history()
@@ -147,7 +182,7 @@ class Brain:
 
         async with httpx.AsyncClient() as client:
             try:
-                data = await self._call_groq(messages, client)
+                data = await self._call_groq_safe(messages, client)
 
                 if "choices" not in data:
                     return {"response": "I couldn't process that right now."}
@@ -189,7 +224,7 @@ class Brain:
 
                     # Second call: model writes the final answer using the tool result.
                     # allow_tools=False keeps this turn from spiraling into further calls.
-                    data = await self._call_groq(messages, client, allow_tools=False)
+                    data = await self._call_groq_safe(messages, client, allow_tools=False)
                     if "choices" not in data:
                         return {"response": "I couldn't process that right now."}
                     message = data["choices"][0]["message"]
