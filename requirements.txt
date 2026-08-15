@@ -9,3 +9,4 @@ beautifulsoup4
 psutil
 PyPDF2
 python-docx
+supabase
