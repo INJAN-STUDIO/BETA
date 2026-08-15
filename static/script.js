@@ -3,7 +3,6 @@ const input = document.getElementById('user-input');
 const sidebar = document.getElementById('sidebar');
 
 document.getElementById('menu-btn').addEventListener('click', () => sidebar.classList.add('open'));
-// FIX: Close sidebar button logic
 document.getElementById('close-menu').addEventListener('click', () => sidebar.classList.remove('open'));
 
 async function sendMessage() {
@@ -14,9 +13,10 @@ async function sendMessage() {
     input.value = '';
     input.style.height = 'auto';
 
+    // Create animated thinking dots
     const thinking = document.createElement('div');
-    thinking.className = 'dots';
-    thinking.innerText = 'B.E.T.A is thinking';
+    thinking.className = 'thinking-dots';
+    thinking.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
     chatBox.appendChild(thinking);
     chatBox.scrollTop = chatBox.scrollHeight;
 

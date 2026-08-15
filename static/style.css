@@ -1,27 +1,36 @@
-/* style.css - Final Sidebar and Header Lockdown */
-* { box-sizing: border-box; }
-body { margin: 0; padding: 0; font-family: 'Inter', sans-serif; background: #000; color: #fff; height: 100vh; overflow: hidden; display: flex; justify-content: center; }
+/* style.css - Refined UI, Animation & Spacing Fixes */
+body { margin: 0; font-family: 'Inter', sans-serif; background: #050505; color: white; height: 100vh; display: flex; justify-content: center; overflow: hidden; }
 
-#app-container { width: 100%; max-width: 450px; height: 100vh; position: relative; background: #050505; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid #111; border-right: 1px solid #111; }
+#app-container { width: 100%; max-width: 450px; height: 100vh; position: relative; background: #0a0a0a; display: flex; flex-direction: column; overflow: hidden; }
 
-/* Header - Centered */
-header { display: flex; justify-content: space-between; align-items: center; padding: 0 15px; height: 60px; flex-shrink: 0; background: #050505; }
-#menu-btn { background: none; border: none; color: #fff; font-size: 1.6rem; cursor: pointer; padding: 10px; display: flex; align-items: center; justify-content: center; }
-#header-avatar { width: 35px; height: 35px; border-radius: 50%; object-fit: cover; }
+/* Header */
+header { display: flex; justify-content: space-between; align-items: center; padding: 15px; height: 60px; box-sizing: border-box; flex-shrink: 0; }
+#menu-btn { background: none; border: none; color: white; font-size: 1.8rem; cursor: pointer; padding: 5px; display: flex; align-items: center; }
+#header-avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
 
-/* Sidebar - Overlay */
-#sidebar { position: absolute; left: -100%; top: 0; width: 80%; height: 100%; background: #0a0a0a; border-right: 1px solid #333; transition: 0.3s ease; z-index: 200; padding: 20px; box-shadow: 5px 0 15px rgba(0,0,0,0.5); }
+/* Sidebar */
+#sidebar { position: absolute; left: -100%; top: 0; width: 70%; height: 100%; background: rgba(20, 20, 20, 0.98); transition: 0.4s ease; z-index: 100; padding: 60px 20px; box-sizing: border-box; }
 #sidebar.open { left: 0; }
-#close-menu { font-size: 1.8rem; background: none; border: none; color: #fff; cursor: pointer; margin-bottom: 20px; display: block; padding: 10px; }
+#close-menu { position: absolute; top: 20px; left: 20px; font-size: 2rem; background: none; border: none; color: white; cursor: pointer; }
 
 /* Chat Area */
-#chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 15px; }
-.bubble { padding: 12px 16px; border-radius: 18px; max-width: 80%; font-size: 0.95rem; line-height: 1.5; }
-.user { background: #3b82f6; align-self: flex-end; border-bottom-right-radius: 4px; }
-.ai { background: #1a1a1a; align-self: flex-start; border-bottom-left-radius: 4px; border: 1px solid #333; }
-.dots { font-size: 0.8rem; color: #666; margin-left: 10px; align-self: flex-start; }
+#chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; box-sizing: border-box; }
+.bubble { padding: 12px 18px; border-radius: 18px; max-width: 80%; font-size: 0.95rem; line-height: 1.4; word-wrap: break-word; }
+.user { background: #3b82f6; align-self: flex-end; color: white; }
+.ai { background: #1a1a1a; align-self: flex-start; border: 1px solid #333; }
 
-/* Input */
-#input-area { width: 100%; padding: 10px 15px; background: #050505; border-top: 1px solid #222; display: flex; align-items: flex-end; flex-shrink: 0; }
-#user-input { flex: 1; background: #111; border: 1px solid #333; color: #fff; padding: 12px; border-radius: 20px; outline: none; resize: none; min-height: 45px; max-height: 100px; }
-#send-btn { background: #3b82f6; border: none; border-radius: 50%; width: 45px; height: 45px; margin-left: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+/* Thinking Animation */
+.thinking-dots { display: flex; gap: 4px; padding: 12px 18px; align-self: flex-start; }
+.dot { width: 8px; height: 8px; background: #666; border-radius: 50%; animation: bounce 1.4s infinite ease-in-out both; }
+.dot:nth-child(1) { animation-delay: -0.32s; }
+.dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes bounce {
+    0%, 80%, 100% { transform: scale(0); }
+    40% { transform: scale(1); }
+}
+
+/* Footer */
+#input-area { width: 100%; box-sizing: border-box; padding: 15px; display: flex; align-items: flex-end; background: #0a0a0a; border-top: 1px solid #333; }
+#user-input { flex: 1; background: #1a1a1a; border: 1px solid #333; color: white; outline: none; resize: none; border-radius: 20px; padding: 12px 15px; min-height: 20px; max-height: 100px; }
+#send-btn { background: #3b82f6; border: none; border-radius: 50%; width: 45px; height: 45px; color: white; cursor: pointer; flex-shrink: 0; margin-left: 10px; display: flex; align-items: center; justify-content: center; }
