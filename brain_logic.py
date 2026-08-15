@@ -116,6 +116,9 @@ class Brain:
             json=payload,
             timeout=20.0,
         )
+        if response.status_code >= 400:
+            # Log the actual reason Groq rejected the request, not just "400"
+            logger.error(f"Groq {response.status_code} response body: {response.text}")
         response.raise_for_status()
         return response.json()
 
@@ -154,7 +157,16 @@ class Brain:
 
                 # If the model wants to search, run the tool(s) and let it respond again
                 if tool_calls:
-                    messages.append(message)
+                    # Rebuild a clean assistant message rather than replaying the raw
+                    # API response object — Groq can reject extra/unexpected fields
+                    # (or a null content) when it's echoed back as input.
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": message.get("content") or "",
+                            "tool_calls": tool_calls,
+                        }
+                    )
                     for call in tool_calls:
                         if call["function"]["name"] == "web_search":
                             try:
@@ -170,6 +182,7 @@ class Brain:
                             {
                                 "role": "tool",
                                 "tool_call_id": call["id"],
+                                "name": call["function"]["name"],
                                 "content": result,
                             }
                         )
