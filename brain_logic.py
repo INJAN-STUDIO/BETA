@@ -23,7 +23,6 @@ async def perform_google_search(query):
         logger.error("SERPER_API_KEY is missing!")
         return "Search functionality not configured."
     
-    # Enhanced query with date for recency
     current_date = datetime.datetime.now().strftime("%d %B %Y")
     enhanced_query = f"{query} (as of {current_date})"
     
@@ -34,12 +33,7 @@ async def perform_google_search(query):
             response = await client.post(
                 "https://google.serper.dev/search",
                 headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
-                json={
-                    "q": enhanced_query,
-                    "gl": "ng", # Set to Nigeria for relevance
-                    "hl": "en",
-                    "num": 3
-                },
+                json={"q": enhanced_query, "gl": "ng", "hl": "en", "num": 3},
                 timeout=10.0
             )
             response.raise_for_status()
@@ -48,7 +42,6 @@ async def perform_google_search(query):
             if not results:
                 return "No search results found."
             
-            # Formatted results including link
             formatted_results = []
             for r in results[:3]:
                 formatted_results.append(f"{r['title']}\nSummary: {r.get('snippet', 'N/A')}\nLink: {r.get('link', 'N/A')}")
@@ -60,11 +53,7 @@ async def perform_google_search(query):
 class Brain:
     def load_history(self):
         try:
-            response = supabase.table("chat_history") \
-                .select("*") \
-                .order("created_at", desc=True) \
-                .limit(8) \
-                .execute()
+            response = supabase.table("chat_history").select("*").order("created_at", desc=True).limit(8).execute()
             history = response.data[::-1]
             return [{"role": item["role"], "content": item["content"]} for item in history]
         except Exception as e:
@@ -73,28 +62,25 @@ class Brain:
 
     def save_message(self, role, content):
         try:
-            supabase.table("chat_history").insert({
-                "role": role,
-                "content": content
-            }).execute()
+            supabase.table("chat_history").insert({"role": role, "content": content}).execute()
         except Exception as e:
             logger.error(f"Supabase save failed: {e}")
 
     async def chat(self, user_message):
         history = self.load_history()
 
+        # Check for name update
         if "my name is" in user_message.lower():
             name = user_message.split("my name is")[-1].strip().split(".")[0]
             update_user_profile({"name": name})
         
         search_results = ""
-        # Improved search trigger
         search_triggers = ["what is", "who is", "search for", "find out", "check", "info about", "latest"]
         if any(word in user_message.lower() for word in search_triggers):
             search_results = f"\n\nSearch Context:\n{await perform_google_search(user_message)}"
         
         profile_context = format_profile_for_system_prompt()
-        system_prompt = f"You are B.E.T.A., a helpful AI assistant. {profile_context} {search_results} Keep responses concise and use a friendly tone."
+        system_prompt = f"You are B.E.T.A. (Best Everyday Technical Assistant), a helpful AI assistant. {profile_context} {search_results} Keep responses concise and use a friendly tone."
         
         messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_message}]
         
