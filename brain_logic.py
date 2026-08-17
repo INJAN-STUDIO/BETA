@@ -17,204 +17,113 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Initialize Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-# Using the model available in your specific account
 MODEL = "qwen/qwen3.6-27b"
 
-# ---- Tool schema Groq/OpenAI-style function calling ----
+# ---- Tool schema with explicit memory management ----
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": (
-                "Search the live web for current information: news, prices, "
-                "weather, sports scores, facts about recent events, or anything "
-                "that could have changed since training. Use this whenever the "
-                "user asks about something current, recent, or that you are not "
-                "certain about from memory."
-            ),
+            "description": "Search the live web for current information, news, or facts you don't know.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_user_profile",
+            "description": "Save or update information about the user (name, preferences, location, etc.) into long-term memory.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query to look up.",
-                    }
-                },
-                "required": ["query"],
+                    "name": {"type": "string", "description": "The user's name"},
+                    "location": {"type": "string", "description": "The user's location"},
+                    "bio": {"type": "string", "description": "Other personal details or interests"}
+                }
             },
         },
     }
 ]
 
 async def perform_google_search(query: str) -> str:
-    if not SERPER_API_KEY:
-        logger.error("SERPER_API_KEY is missing!")
-        return "Search functionality not configured."
-
-    current_date = datetime.datetime.now().strftime("%d %B %Y")
-    enhanced_query = f"{query} (as of {current_date})"
-
-    logger.info(f"Researching: {enhanced_query}")
-
+    if not SERPER_API_KEY: return "Search not configured."
     async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                "https://google.serper.dev/search",
-                headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
-                json={"q": enhanced_query, "gl": "ng", "hl": "en", "num": 3},
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            data = response.json()
-            results = data.get("organic", [])
-            if not results:
-                return "No search results found."
-
-            formatted_results = []
-            for r in results[:3]:
-                formatted_results.append(
-                    f"{r['title']}\nSummary: {r.get('snippet', 'N/A')}\nLink: {r.get('link', 'N/A')}"
-                )
-            return "\n\n".join(formatted_results)
-        except Exception as e:
-            logger.error(f"Search failed: {str(e)}")
-            return f"Search service error: {str(e)}"
+        response = await client.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+            json={"q": query, "num": 3},
+            timeout=10.0,
+        )
+        data = response.json()
+        results = data.get("organic", [])
+        return "\n\n".join([f"{r['title']}: {r.get('snippet')}" for r in results[:3]])
 
 class Brain:
     def load_history(self):
         try:
-            response = (
-                supabase.table("chat_history")
-                .select("*")
-                .order("created_at", desc=True)
-                .limit(8)
-                .execute()
-            )
+            response = supabase.table("chat_history").select("*").order("created_at", desc=True).limit(8).execute()
             history = response.data[::-1]
-            cleaned = []
-            for item in history:
-                role = item.get("role")
-                content = item.get("content")
-                if role in ("user", "assistant") and isinstance(content, str) and content.strip():
-                    cleaned.append({"role": role, "content": content})
-            return cleaned
-        except Exception as e:
-            logger.error(f"Supabase history load failed: {e}")
-            return []
+            return [{"role": item["role"], "content": item["content"]} for item in history if item.get("content")]
+        except: return []
 
     def save_message(self, role, content):
-        try:
-            supabase.table("chat_history").insert({"role": role, "content": content}).execute()
-        except Exception as e:
-            logger.error(f"Supabase save failed: {e}")
+        try: supabase.table("chat_history").insert({"role": role, "content": content}).execute()
+        except Exception as e: logger.error(f"Save failed: {e}")
 
     async def _call_groq(self, messages, client, allow_tools=True):
         payload = {"model": MODEL, "messages": messages}
         if allow_tools:
             payload["tools"] = TOOLS
             payload["tool_choice"] = "auto"
-
         response = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
             json=payload,
             timeout=20.0,
         )
-        if response.status_code >= 400:
-            logger.error(f"Groq {response.status_code} response body: {response.text}")
         response.raise_for_status()
         return response.json()
 
-    async def _call_groq_safe(self, messages, client, allow_tools=True):
-        try:
-            return await self._call_groq(messages, client, allow_tools=allow_tools)
-        except Exception as e:
-            body = getattr(getattr(e, "response", None), "text", "") or ""
-            if allow_tools and "tool_use_failed" in body:
-                logger.warning("tool_use_failed \u2014 retrying once with tools enabled")
-                try:
-                    return await self._call_groq(messages, client, allow_tools=True)
-                except Exception as e2:
-                    body2 = getattr(getattr(e2, "response", None), "text", "") or ""
-                    if "tool_use_failed" in body2:
-                        logger.warning("tool_use_failed again \u2014 falling back without tools")
-                        return await self._call_groq(messages, client, allow_tools=False)
-                    raise
-            raise
-
     async def chat(self, user_message):
         history = self.load_history()
-
-        if "my name is" in user_message.lower():
-            name = user_message.split("my name is")[-1].strip().split(".")[0]
-            update_user_profile({"name": name})
-
         profile_context = format_profile_for_system_prompt()
         system_prompt = (
-            "You are B.E.T.A. (Best Everyday Technical Assistant), a helpful AI "
-            "assistant. You have access to a web_search tool for anything current, "
-            "recent, or uncertain from memory \u2014 use it whenever it would help, "
-            "don't wait to be asked to 'search'. "
-            f"{profile_context} Keep responses concise and use a friendly tone."
+            f"You are B.E.T.A. You have a 'web_search' tool and an 'update_user_profile' tool. "
+            f"If the user shares personal info (name, location, interests), use 'update_user_profile' immediately. "
+            f"{profile_context} Keep responses concise."
         )
-
-        messages = (
-            [{"role": "system", "content": system_prompt}]
-            + history
-            + [{"role": "user", "content": user_message}]
-        )
+        messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_message}]
 
         async with httpx.AsyncClient() as client:
-            try:
-                data = await self._call_groq_safe(messages, client)
+            data = await self._call_groq(messages, client)
+            message = data["choices"][0]["message"]
+            
+            if message.get("tool_calls"):
+                for call in message["tool_calls"]:
+                    func_name = call["function"]["name"]
+                    args = json.loads(call["function"]["arguments"])
+                    
+                    if func_name == "web_search":
+                        result = await perform_google_search(args["query"])
+                    elif func_name == "update_user_profile":
+                        update_user_profile(args)
+                        result = "Profile updated successfully."
+                    
+                    messages.append(message)
+                    messages.append({"role": "tool", "tool_call_id": call["id"], "name": func_name, "content": result})
+                
+                final_data = await self._call_groq(messages, client, allow_tools=False)
+                ai_reply = final_data["choices"][0]["message"]["content"]
+            else:
+                ai_reply = message.get("content")
 
-                if "choices" not in data:
-                    return {"response": "I couldn't process that right now."}
-
-                message = data["choices"][0]["message"]
-                tool_calls = message.get("tool_calls")
-
-                if tool_calls:
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": message.get("content") or "",
-                            "tool_calls": tool_calls,
-                        }
-                    )
-                    for call in tool_calls:
-                        if call["function"]["name"] == "web_search":
-                            try:
-                                args = json.loads(call["function"]["arguments"])
-                            except (json.JSONDecodeError, TypeError):
-                                args = {}
-                            query = args.get("query", user_message)
-                            result = await perform_google_search(query)
-                        else:
-                            result = "Unknown tool."
-
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": call["id"],
-                                "name": call["function"]["name"],
-                                "content": result,
-                            }
-                        )
-
-                    data = await self._call_groq_safe(messages, client, allow_tools=False)
-                    if "choices" not in data:
-                        return {"response": "I couldn't process that right now."}
-                    message = data["choices"][0]["message"]
-
-                ai_reply = message.get("content") or "I couldn't come up with a response."
-                self.save_message("user", user_message)
-                self.save_message("assistant", ai_reply)
-                return {"response": ai_reply}
-
-            except Exception as e:
-                logger.error(f"Groq API error: {e}")
-                return {"response": f"System Error: {str(e)}"}
+            self.save_message("user", user_message)
+            self.save_message("assistant", ai_reply)
+            return {"response": ai_reply}
 
 brain = Brain()
