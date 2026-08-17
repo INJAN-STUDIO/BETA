@@ -17,8 +17,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Initialize Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-# Reverted to the original model as requested
-MODEL = "llama-3.3-70b-versatile"
+# Using the model available in your specific account
+MODEL = "qwen/qwen3.6-27b"
 
 # ---- Tool schema Groq/OpenAI-style function calling ----
 TOOLS = [
