@@ -15,17 +15,15 @@ SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Initialize Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 MODEL = "qwen/qwen3.6-27b"
 
-# ---- Tool schema with explicit memory management ----
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the live web for current information, news, or facts you don't know.",
+            "description": "Search the live web for current information.",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -37,13 +35,13 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "update_user_profile",
-            "description": "Save or update information about the user (name, preferences, location, etc.) into long-term memory.",
+            "description": "Save personal info about the user.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "The user's name"},
-                    "location": {"type": "string", "description": "The user's location"},
-                    "bio": {"type": "string", "description": "Other personal details or interests"}
+                    "name": {"type": "string"},
+                    "location": {"type": "string"},
+                    "bio": {"type": "string"}
                 }
             },
         },
@@ -93,8 +91,9 @@ class Brain:
         history = self.load_history()
         profile_context = format_profile_for_system_prompt()
         system_prompt = (
-            f"You are B.E.T.A. You have a 'web_search' tool and an 'update_user_profile' tool. "
-            f"If the user shares personal info (name, location, interests), use 'update_user_profile' immediately. "
+            f"You are B.E.T.A. Always be helpful and friendly. "
+            f"If you need to use a tool, do so silently in the background. "
+            f"Do not show <think> tags or internal processes to the user. "
             f"{profile_context} Keep responses concise."
         )
         messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_message}]
@@ -104,23 +103,25 @@ class Brain:
             message = data["choices"][0]["message"]
             
             if message.get("tool_calls"):
+                messages.append(message)
                 for call in message["tool_calls"]:
                     func_name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
-                    
                     if func_name == "web_search":
                         result = await perform_google_search(args["query"])
                     elif func_name == "update_user_profile":
                         update_user_profile(args)
-                        result = "Profile updated successfully."
-                    
-                    messages.append(message)
+                        result = "Profile updated."
                     messages.append({"role": "tool", "tool_call_id": call["id"], "name": func_name, "content": result})
                 
                 final_data = await self._call_groq(messages, client, allow_tools=False)
                 ai_reply = final_data["choices"][0]["message"]["content"]
             else:
                 ai_reply = message.get("content")
+
+            # Clean up the output in case the model ignored instructions and outputted <think>
+            if "<think>" in ai_reply:
+                ai_reply = ai_reply.split("</think>")[-1].strip()
 
             self.save_message("user", user_message)
             self.save_message("assistant", ai_reply)
