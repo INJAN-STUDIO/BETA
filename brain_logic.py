@@ -17,9 +17,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Initialize Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Changed model to the most stable free-tier model on Groq
-MODEL = "llama-3.1-8b-instant"
+# Reverted to the original model as requested
+MODEL = "llama-3.3-70b-versatile"
 
 # ---- Tool schema Groq/OpenAI-style function calling ----
 TOOLS = [
@@ -47,7 +46,6 @@ TOOLS = [
         },
     }
 ]
-
 
 async def perform_google_search(query: str) -> str:
     if not SERPER_API_KEY:
@@ -82,7 +80,6 @@ async def perform_google_search(query: str) -> str:
         except Exception as e:
             logger.error(f"Search failed: {str(e)}")
             return f"Search service error: {str(e)}"
-
 
 class Brain:
     def load_history(self):
@@ -219,6 +216,5 @@ class Brain:
             except Exception as e:
                 logger.error(f"Groq API error: {e}")
                 return {"response": f"System Error: {str(e)}"}
-
 
 brain = Brain()
