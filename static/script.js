@@ -1,9 +1,17 @@
 const chatBox = document.getElementById('chat-container');
 const input = document.getElementById('user-input');
 const sidebar = document.getElementById('sidebar');
+const thinkToggleBtn = document.getElementById('think-toggle-btn');
+
+let showThinking = false;
 
 document.getElementById('menu-btn').addEventListener('click', () => sidebar.classList.add('open'));
 document.getElementById('close-menu').addEventListener('click', () => sidebar.classList.remove('open'));
+
+thinkToggleBtn.addEventListener('click', () => {
+    showThinking = !showThinking;
+    thinkToggleBtn.classList.toggle('active', showThinking);
+});
 
 async function sendMessage() {
     const text = input.value.trim();
@@ -24,11 +32,18 @@ async function sendMessage() {
         const response = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text })
+            body: JSON.stringify({ message: text, show_thinking: showThinking })
         });
         const data = await response.json();
         
         chatBox.removeChild(thinking);
+
+        // Only appears when the Think toggle was on for this message -
+        // the backend simply omits "thought" otherwise.
+        if (data.thought) {
+            addBubble(data.thought, 'thought');
+        }
+
         const aiBubble = addBubble("", 'ai');
         streamText(aiBubble, data.response);
     } catch (e) {
