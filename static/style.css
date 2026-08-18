@@ -8,6 +8,34 @@ header { display: flex; justify-content: space-between; align-items: center; pad
 #menu-btn { background: none; border: none; color: white; font-size: 1.8rem; cursor: pointer; padding: 5px; display: flex; align-items: center; }
 #header-avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
 
+/* Header right side - avatar + Think toggle grouped together */
+#header-right { display: flex; align-items: center; gap: 10px; }
+
+/* Think toggle button - off by default, lights up blue when active */
+#think-toggle-btn {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #888;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    border-radius: 14px;
+    padding: 6px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+#think-toggle-btn:hover { border-color: #3b82f6; color: #ccc; }
+
+#think-toggle-btn.active {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: #3b82f6;
+    color: #3b82f6;
+}
+
 /* Sidebar */
 #sidebar { position: absolute; left: -100%; top: 0; width: 70%; height: 100%; background: rgba(20, 20, 20, 0.98); transition: 0.4s ease; z-index: 100; padding: 60px 20px; box-sizing: border-box; }
 #sidebar.open { left: 0; }
@@ -18,6 +46,19 @@ header { display: flex; justify-content: space-between; align-items: center; pad
 .bubble { padding: 12px 18px; border-radius: 18px; max-width: 80%; font-size: 0.95rem; line-height: 1.4; word-wrap: break-word; }
 .user { background: #3b82f6; align-self: flex-end; color: white; }
 .ai { background: #1a1a1a; align-self: flex-start; border: 1px solid #333; }
+
+/* Thought bubble - shown before the real answer, only when Think mode is on.
+   Dimmed and italic so it visually reads as "in progress / lower confidence"
+   next to the solid .ai answer bubble that follows it. */
+.thought {
+    background: #141414;
+    align-self: flex-start;
+    border: 1px dashed #333;
+    color: #777;
+    font-size: 0.85rem;
+    font-style: italic;
+    opacity: 0.85;
+}
 
 /* Thinking Animation */
 .thinking-dots { display: flex; gap: 4px; padding: 12px 18px; align-self: flex-start; }
