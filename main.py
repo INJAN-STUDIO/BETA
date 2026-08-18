@@ -20,12 +20,13 @@ async def read_index():
 async def chat_endpoint(request: Request):
     data = await request.json()
     user_message = data.get("message", "")
+    show_thinking = bool(data.get("show_thinking", False))
     
     if not user_message:
         return JSONResponse({"error": "No message provided"}, status_code=400)
     
     # Call the brain
-    result = await brain.chat(user_message)
+    result = await brain.chat(user_message, show_thinking=show_thinking)
     
     return JSONResponse(result)
 
