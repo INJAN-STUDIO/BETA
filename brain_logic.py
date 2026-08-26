@@ -8,10 +8,13 @@ from rag_memory import format_profile_for_system_prompt, update_user_profile
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SERPER_API_KEY = os.getenv("SERPER_API_KEY")
+# Fetch these directly when needed in the methods to avoid import-time initialization issues
+def get_env(key):
+    return os.getenv(key)
+
+SUPABASE_URL = get_env("SUPABASE_URL")
+SUPABASE_KEY = get_env("SUPABASE_KEY")
+GROQ_API_KEY = get_env("GROQ_API_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 MODEL = "qwen/qwen3.6-27b"
@@ -27,14 +30,17 @@ def should_search(message: str) -> bool:
     return any(trigger in lower for trigger in SEARCH_TRIGGER_WORDS)
 
 async def web_search(query: str, num_results: int = 5):
-    if not SERPER_API_KEY:
+    # Fetch API key fresh at time of request
+    serper_api_key = get_env("SERPER_API_KEY")
+    if not serper_api_key:
+        logger.error("SERPER_API_KEY not found in environment at time of search!")
         return None
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://google.serper.dev/search",
                 json={"q": query, "num": num_results},
-                headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+                headers={"X-API-KEY": serper_api_key, "Content-Type": "application/json"},
                 timeout=15.0,
             )
             data = response.json()
@@ -69,13 +75,18 @@ class Brain:
             search_results = await web_search(user_message)
             if search_results:
                 messages.append({"role": "system", "content": f"User's request requires live info. Use these results: {search_results}"})
+            else:
+                logger.warning("Search triggered but results failed to return.")
         
         messages.append({"role": "user", "content": user_message})
+        
+        # Re-fetch Groq key fresh
+        groq_key = get_env("GROQ_API_KEY")
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                headers={"Authorization": f"Bearer {groq_key}"},
                 json={"model": MODEL, "messages": messages},
                 timeout=30.0,
             )
