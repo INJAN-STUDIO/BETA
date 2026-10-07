@@ -236,10 +236,15 @@ class AIRIS:
 
 
 class Agent:
-    def __init__(self, output_callback=None, tool_callback=None, progress_callback=None):
+    def __init__(self, output_callback=None, tool_callback=None, progress_callback=None, confirm_callback=None, on_provider_switch=None, on_rate_limit=None, groq_api_key=None, on_usage_update=None):
         self.output_callback = output_callback
         self.tool_callback = tool_callback
         self.progress_callback = progress_callback
+        self.confirm_callback = confirm_callback
+        self.on_provider_switch = on_provider_switch
+        self.on_rate_limit = on_rate_limit
+        self.groq_api_key = groq_api_key
+        self.on_usage_update = on_usage_update
 
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.active_provider = "gemini"  # or "groq" while Gemini's daily quota is exhausted
@@ -258,7 +263,7 @@ class Agent:
         # Init SDK Clients using our system environment
         # Both endpoints point to OpenAI-compatible wrappers so one client pattern rules both
         gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-        groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+        groq_key = self.groq_api_key if self.groq_api_key else os.environ.get("GROQ_API_KEY", "").strip()
 
         self.gemini_client = OpenAI(
             api_key=gemini_key if gemini_key else "missing",
