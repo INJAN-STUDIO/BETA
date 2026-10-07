@@ -122,6 +122,12 @@ def configure():
     ac.ALLOWED_TOOLS = set(CLOUD_TOOLS)
     ac.SYSTEM_PROMPT = BETA_PROMPT
     ac.MAX_REMEMBERED_MESSAGES = MAX_REMEMBERED
+    # Optional: choose the model order with GEMINI_MODELS, e.g. "gemini-3.1-flash-lite" for
+    # the big daily allowance, or "gemini-3.8-flash,gemini-3.1-flash-lite" for smartest-first
+    # with a fallback. Without it the agent_core.py default (smartest first) is used.
+    chain = [m.strip() for m in os.environ.get("GEMINI_MODELS", "").split(",") if m.strip()]
+    if chain:
+        ac.MODEL, ac.FALLBACK_MODELS = chain[0], chain[1:]
     ac.load_memory = _load_memory
     ac.save_memory = _save_memory
     ac.USAGE = CloudUsage(storage.get_store())

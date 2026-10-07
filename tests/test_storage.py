@@ -112,42 +112,50 @@ for i in range(5): ac.save_memory([{"role": "system", "content": "p"}] + [{"role
 check("history trimmed to the cloud limit", len([m for m in storage.STORE.get("memory") if m["role"] != "system"]) <= beta_agent.MAX_REMEMBERED)
 
 u = beta_agent.CloudUsage(storage.STORE)
-for _ in range(7): u.record("gemini-3.1-flash-lite")
+for _ in range(7): u.record("gemini-3.8-flash")
 storage.STORE.flush(); storage.STORE = storage.SupabaseStore(URL, "SRK")
 u2 = beta_agent.CloudUsage(storage.STORE)
-check("daily request count survives restart", u2.entry("gemini-3.1-flash-lite")["used"] == 7, u2.entry("gemini-3.1-flash-lite"))
-os.environ["BETA_DAILY_LIMITS"] = json.dumps({"gemini-3.1-flash-lite": 250})
-check("limits configurable via BETA_DAILY_LIMITS", beta_agent.CloudUsage(storage.STORE).entry("gemini-3.1-flash-lite")["limit"] == 250)
+check("daily request count survives restart", u2.entry("gemini-3.8-flash")["used"] == 7, u2.entry("gemini-3.8-flash"))
+os.environ["BETA_DAILY_LIMITS"] = json.dumps({"gemini-3.8-flash": 250})
+check("limits configurable via BETA_DAILY_LIMITS", beta_agent.CloudUsage(storage.STORE).entry("gemini-3.8-flash")["limit"] == 250)
 os.environ["BETA_DAILY_LIMITS"] = "not json"
-check("bad BETA_DAILY_LIMITS ignored, defaults kept", beta_agent.CloudUsage(storage.STORE).entry("gemini-3.1-flash-lite")["limit"] == 500)
+check("bad BETA_DAILY_LIMITS ignored, defaults kept", beta_agent.CloudUsage(storage.STORE).entry("gemini-3.8-flash")["limit"] == 20)
+
+# ---- tool allowlist really removes the dangerous tools ----
+class A(ac.Agent):  # schema only - no network
+    def __init__(self): pass
+names = {t["function"]["name"] for t in A()._tools_schema()}
+check("cloud schema excludes terminal/file/email/clipboard tools", not names & {"run_command", "read_file", "write_file", "list_directory", "send_email", "copy_to_clipboard"}, names)
+check("cloud schema keeps the safe tools", names == beta_agent.CLOUD_TOOLS, names)
+ac.ALLOWED_TOOLS = None
+check("desktop ALPHA unchanged (all 11 tools when no allowlist)", len(A()._tools_schema()) == 11, len(A()._tools_schema()))
+beta_agent.configure()
 
 # dispatch-level enforcement: a hallucinated call to a removed tool must not run
 import types
 ran = []
 class B(ac.Agent):
     def __init__(self):
-        self.output_callback = None
-        self.tool_callback = None
-        self.progress_callback = None
-        self.messages = [{"role": "system", "content": "s"}]
-        self.active_provider = "gemini"
-        self._current_job_id = None
-        self._cancel_flag = False
-        self.tools_registry = {}  # Mocked empty tools registry for the test
+        import threading
+        self._lock = threading.Lock(); self.messages = [{"role": "system", "content": "s"}]; self.active_provider = "gemini"
+        self.confirm = lambda a, d: True; self._current_on_images = None; self.on_model_update = None; self.on_usage_update = None
+        self.allowed_image_urls = set(); self.allowed_page_urls = set()
     def _run_command(self, command, explanation): ran.append(command); return "RAN"
-    def _start_airis(self, chain, messages, active_tool_schemas):
-        # Mocking provider return to trigger run_command hallucination
-        tc = types.SimpleNamespace(id="1", function=types.SimpleNamespace(name="run_command", arguments=json.dumps({"command": "rm -rf /", "explanation": "x"})))
+    def _call_with_fallback(self):
+        tc = types.SimpleNamespace(id="1", function=types.SimpleNamespace(name="run_command", arguments=json.dumps({"command": "rm -rf /", "explanation": "x"})), model_dump=lambda exclude_none=True: {"id": "1", "type": "function", "function": {"name": "run_command", "arguments": json.dumps({"command": "rm -rf /", "explanation": "x"})}})
         if not getattr(self, "_done", False):
             self._done = True
-            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=None, tool_calls=[tc]))]), "m"
-        return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="done", tool_calls=None))]), "m"
-
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=None, tool_calls=[tc]))], usage=None), "m"
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="done", tool_calls=None))], usage=None), "m"
 ac.save_memory = lambda m: None
-b = B()
-b.send("do something bad")
+b = B(); b.send("do something bad")
 tool_reply = [m for m in b.messages if m.get("role") == "tool"]
-check("hallucinated run_command is refused at dispatch, never executed", not ran and tool_reply and ("Unknown tool" in tool_reply[0]["content"] or "not allowed" in tool_reply[0]["content"]), (ran, tool_reply))
-print(f"\n{ok} passed, {fail} failed")
-if __name__ == "__main__":
-    sys.exit(1 if fail else 0)
+check("hallucinated run_command is refused at dispatch, never executed", not ran and tool_reply and "Unknown tool" in tool_reply[0]["content"], (ran, tool_reply))
+
+# ---- model order is configurable (GEMINI_MODELS) ----
+default_chain = ac.MODEL
+os.environ["GEMINI_MODELS"] = "gemini-3.1-flash-lite, gemini-3.8-flash"
+beta_agent.configure()
+check("GEMINI_MODELS sets the model order", ac.MODEL == "gemini-3.1-flash-lite" and ac.FALLBACK_MODELS == ["gemini-3.8-flash"], (ac.MODEL, ac.FALLBACK_MODELS))
+os.environ.pop("GEMINI_MODELS"); ac.MODEL, ac.FALLBACK_MODELS = default_chain, ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"]
+print(f"\n{ok} passed, {fail} failed"); sys.exit(1 if fail else 0)

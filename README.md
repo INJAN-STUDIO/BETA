@@ -35,6 +35,14 @@ on the Dell for those.
 - `agent_core.py` here is ALPHA's, with two tiny additions (a tool allowlist). If you change
   ALPHA's agent later, copy the file over again.
 
+- **Model order:** by default B.E.T.A. tries the smartest Gemini Flash first and falls back down the
+  list. The big Flash models have small daily allowances (~20 requests), Flash-Lite a big one (~500).
+  Set `GEMINI_MODELS` to choose, e.g. `gemini-3.1-flash-lite` (more messages per day, a bit less smart)
+  or `gemini-3.8-flash,gemini-3.1-flash-lite`.
+- **Icon:** `static/icon-192.png` / `icon-512.png` are square crops of your B logo. The original is small,
+  so a larger source image would make a sharper icon.
+- **Keep this project in git.** If any tool (or ALPHA) overwrites a file, `git checkout <file>` restores it.
+
 ## Run it on your laptop first (optional)
 
     pip install -r requirements.txt

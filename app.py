@@ -179,7 +179,7 @@ def _run_job(job, text, saved_paths, tmpdir):
             if not job["cancelled"]:
                 job["events"].append({"type": "images", "payload": payload})
 
-        reply = agent.send(text, attachments=saved_paths or None)
+        reply = agent.send(text, image_paths=saved_paths or None, on_tool_result=on_tool, on_images=on_images)
         if not job["cancelled"]:
             job["events"].append({"type": "reply", "text": reply or ""})
     except Exception as e:
