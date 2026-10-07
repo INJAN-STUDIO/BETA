@@ -28,7 +28,7 @@ class FakeAgent:
         self.messages = [{"role": "system", "content": "s"}]
         self._lock = threading.Lock(); self.allowed_image_urls = {"https://img.example/ok.jpg"}
         self.last = None; self.delay = 0.0; self.fail = False
-    def usage_snapshot(self): return {"provider": "gemini", "active": "gemini-3.8-flash", "resets_in": 100, "models": []}
+    def usage_snapshot(self): return {"provider": "gemini", "active": "gemini-3.1-flash-lite", "resets_in": 100, "models": []}
     def send(self, text, image_paths=None, on_tool_result=None, on_images=None):
         self.last = {"text": text, "paths": list(image_paths or []), "exists": [os.path.exists(p) for p in (image_paths or [])]}
         self.messages.append({"role": "user", "content": text})
@@ -92,7 +92,7 @@ types_ = [e["type"] for e in events]
 check("poll delivers activity, images, reply in order", types_ == ["activity", "images", "reply"], types_)
 check("reply text intact", events[-1]["text"] == "Hello **Karachi**")
 check("poll finishes (done=true)", done)
-check("usage snapshot included in poll", p.get("usage", {}) and p["usage"]["active"] == "gemini-3.8-flash")
+check("usage snapshot included in poll", p.get("usage", {}) and p["usage"]["active"] == "gemini-3.1-flash-lite")
 check("unknown job -> 404", c.get("/api/poll?job=nope").status_code == 404)
 hist = c.get("/api/state").get_json()["history"]
 check("history lists user + assistant", [m["role"] for m in hist] == ["user", "assistant"], hist)
@@ -151,4 +151,6 @@ c5 = appmod.app.test_client()
 check("no BETA_PASSWORD -> login disabled, never open", c5.post("/api/login", json={"password": ""}, headers=H).status_code == 503 and c5.get("/api/state").status_code == 503)
 os.environ["BETA_PASSWORD"] = "correct horse"
 
-print(f"\n{ok} passed, {fail} failed"); sys.exit(1 if fail else 0)
+print(f"\n{ok} passed, {fail} failed")
+if __name__ == "__main__":
+    sys.exit(1 if fail else 0)
