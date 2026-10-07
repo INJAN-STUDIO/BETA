@@ -1,0 +1,29 @@
+# Render Blueprint: Render -> New -> Blueprint -> pick this repo, then fill in the
+# secret values it asks for. (You can also create the service by hand with the same
+# build/start commands and add the environment variables in the dashboard.)
+services:
+  - type: web
+    name: beta
+    runtime: python
+    plan: free
+    region: frankfurt            # closest Render region to Nigeria
+    buildCommand: pip install -r requirements.txt
+    # ONE worker with several threads: the app keeps chat jobs in memory, so every
+    # request must reach the same process.
+    startCommand: gunicorn app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: SECRET_KEY          # signs the login cookie - Render makes one for you
+        generateValue: true
+      - key: BETA_PASSWORD       # what you type to unlock B.E.T.A. - make it long
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY        # optional backup model
+        sync: false
+      - key: SERPER_API_KEY      # web + image search
+        sync: false
+      - key: SUPABASE_URL        # keeps memory across restarts
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false

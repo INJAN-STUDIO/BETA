@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05060a">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>B.E.T.A</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- Waking the server (Render's free plan sleeps after 15 min idle) -->
+<div id="wake" class="screen">
+  <div class="screen-card">
+    <div class="blob big"></div>
+    <div class="screen-title">B.E.T.A</div>
+    <div id="wake-text" class="screen-sub">Connecting…</div>
+    <div class="spinner"></div>
+  </div>
+</div>
+
+<!-- Login -->
+<div id="login" class="screen hidden">
+  <div class="screen-card">
+    <div class="blob big"></div>
+    <div class="screen-title">B.E.T.A</div>
+    <div class="screen-sub">Best Everyday Technical Assistant</div>
+    <input id="password" class="field" type="password" placeholder="Password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button id="login-btn" class="btn-primary">Unlock</button>
+    <div id="login-error" class="error-line"></div>
+  </div>
+</div>
+
+<!-- The app -->
+<div id="app" class="app hidden">
+  <header class="header">
+    <div class="brand">
+      <div class="blob"></div>
+      <div>
+        <div class="brand-name">B.E.T.A</div>
+        <div class="brand-sub" id="state-label">ready</div>
+      </div>
+    </div>
+    <button id="menu-btn" class="icon-btn" aria-label="Menu" data-icon="menu"></button>
+  </header>
+
+  <div class="meter" id="usage-meter">
+    <span id="usage-label" class="meter-label">Requests —</span>
+    <div class="meter-track"><div id="usage-fill" class="meter-fill"></div></div>
+    <span id="usage-reset" class="meter-reset"></span>
+  </div>
+
+  <main id="chat" class="chat" tabindex="-1"></main>
+
+  <div id="activity" class="activity hidden"><span class="activity-dot"></span><span id="activity-text"></span></div>
+  <button id="jump" class="jump hidden"><span data-icon="arrow-down"></span>Latest</button>
+
+  <footer class="composer">
+    <div id="attach-row" class="attach-row hidden"></div>
+    <div class="composer-pill">
+      <textarea id="input" class="input" rows="1" placeholder="Ask B.E.T.A. something…" enterkeyhint="send"></textarea>
+      <div class="composer-row">
+        <div class="composer-left">
+          <button id="attach-btn" class="icon-btn" aria-label="Attach" data-icon="clip"></button>
+          <button id="mic-btn" class="icon-btn hidden" aria-label="Speak" data-icon="mic"></button>
+        </div>
+        <button id="send-btn" class="send-btn" aria-label="Send" data-icon="send"></button>
+      </div>
+    </div>
+    <input id="file-input" type="file" accept="image/*,.txt,.md,.py,.js,.json,.csv,.html,.css,.xml,.yaml,.yml,.sh,.log,.docx" multiple hidden>
+  </footer>
+</div>
+
+<!-- Menu -->
+<div id="menu" class="overlay hidden">
+  <div class="sheet">
+    <div class="sheet-title">Menu</div>
+    <button class="sheet-item" id="m-memory"><span data-icon="bookmark"></span>Long-term memory</button>
+    <button class="sheet-item" id="m-voice"><span id="m-voice-icon" data-icon="speaker"></span><span id="m-voice-text">Read replies aloud: off</span></button>
+    <button class="sheet-item" id="m-clear"><span data-icon="trash"></span>Clear this conversation</button>
+    <button class="sheet-item" id="m-logout"><span data-icon="logout"></span>Lock B.E.T.A.</button>
+    <button class="sheet-close" id="menu-close">Close</button>
+  </div>
+</div>
+
+<!-- Memory -->
+<div id="memory" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Long-term memory</div>
+    <div id="memory-list" class="sheet-scroll"></div>
+    <button class="sheet-close" id="memory-close">Close</button>
+  </div>
+</div>
+
+<!-- Photo viewer -->
+<div id="lightbox" class="lightbox hidden">
+  <div class="lightbox-card">
+    <div class="lightbox-stage"><img id="lb-img" alt=""><div id="lb-status" class="lb-status"></div></div>
+    <div class="lightbox-info">
+      <div class="lb-text"><div id="lb-title" class="lb-title"></div><div id="lb-source" class="lb-source"></div></div>
+      <div class="lb-actions">
+        <button id="lb-open" class="lb-btn"><span data-icon="external"></span>Source</button>
+        <button id="lb-close" class="lb-btn"><span data-icon="x"></span>Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
