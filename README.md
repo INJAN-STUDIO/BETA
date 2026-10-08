@@ -19,10 +19,30 @@ on the Dell for those.
 3. **Render:** New -> Blueprint -> choose the repo. Fill in the values it asks for:
    `BETA_PASSWORD` (long!), `GEMINI_API_KEY`, `SERPER_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`,
    optionally `GROQ_API_KEY`. `SECRET_KEY` is generated for you.
-4. **Phone:** open your `https://beta-xxxx.onrender.com` link in Chrome, log in, then Chrome menu
-   -> **Install app** / **Add to Home screen**.
+4. **Phone (Fennec / Firefox):** open your `https://beta-xxxx.onrender.com` link, log in once, then tap the
+   **⋮ menu -> Install**. (When the app qualifies, Firefox shows *Install* in place of *Add to Home
+   screen*.) B.E.T.A. gets its own icon and opens full-screen. Chrome-type browsers: menu -> *Install app*.
+   Inside B.E.T.A. the **⋯ menu -> Install as an app** shows these steps and checks the usual causes.
+
+## If "Install" doesn't appear in Fennec / Firefox
+
+- Open the site in a **normal tab** (not Private) - private tabs block the offline helper Install needs.
+- Open it once, wait ~10 seconds, **reload**, then check the ⋮ menu again (the service worker has to
+  register first). B.E.T.A.'s own menu -> *Install as an app* shows whether it's ready.
+- It must be the **https** Render address, not an http link.
+- In Fennec's settings, make sure site data/cookies aren't set to clear on exit, and that service
+  workers aren't disabled by a privacy add-on.
+- Some privacy-hardened Firefox builds switch service workers off entirely; there, use
+  *Add to Home screen* (a shortcut) instead.
 
 ## Things to know
+
+- **Voice input:** Firefox doesn't have speech recognition, so the microphone button is hidden in
+  Fennec. Read-aloud (menu -> Read replies aloud) still works. Voice input can be added with a small
+  server-side transcriber if you want it.
+- **No Google in the app itself:** B.E.T.A.'s page loads no fonts, scripts or trackers from anyone
+  else. (The AI behind it is still Gemini, by your choice - set `GEMINI_MODELS`/Groq to change that.)
+- **Text size:** menu -> Text size cycles Small / Medium / Large.
 
 - **Free plan sleeps** after ~15 min idle. The first open then shows a "waking up" screen for
   up to a minute, then works normally. The $7 Starter plan removes the sleep.

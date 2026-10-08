@@ -2,11 +2,15 @@
 // phone's cache, even while Render's free server is still waking up (up to ~1 minute),
 // so you see a friendly "waking up" screen instead of a blank page. API calls are
 // never cached - chat data always comes live from the server.
-var CACHE = 'beta-shell-v1';
-var SHELL = ['/', '/static/style.css', '/static/app.js', '/static/icon-192.png', '/manifest.webmanifest'];
+var CACHE = 'beta-shell-v2';
+var SHELL = ['/', '/static/style.css', '/static/app.js', '/static/logo.jpg', '/static/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
+  // Cache each file on its own: with addAll(), ONE missing file makes the whole install fail,
+  // and a service worker that never installs is a common reason a browser won't offer "Install".
+  e.waitUntil(caches.open(CACHE).then(function (c) {
+    return Promise.all(SHELL.map(function (u) { return c.add(u).catch(function () {}); }));
+  }).then(function () { return self.skipWaiting(); }));
 });
 
 self.addEventListener('activate', function (e) {

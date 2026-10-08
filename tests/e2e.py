@@ -82,10 +82,37 @@ with sync_playwright() as pw:
     p.fill("#password", "wrong"); p.keyboard.press("Enter")
     wait_js(p, "() => document.getElementById('login-error').textContent.length > 0")
     out["wrong_pw"] = p.inner_text("#login-error"); out["shake"] = p.evaluate("() => document.querySelector('#login .screen-card').classList.contains('shake')")
-    p.fill("#password", "pw123"); p.keyboard.press("Enter")                      # Enter works on the login form
+    out["login_logo_loaded"] = p.evaluate("() => { const i = document.querySelector('#login .logo-img'); return i.complete && i.naturalWidth > 100 && !document.querySelector('#login .blob'); }")
+    p.fill("#password", "pw123")
+    box = p.locator("#login-btn").bounding_box(); p.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2); p.mouse.down()
+    out["ripple_on_press"] = p.locator("#login-btn .ripple").count() >= 1
+    p.screenshot(path="e2e_pressed.png"); p.mouse.up()                              # releasing = click = log in
+    seen = {"unlocking": False, "reveal": False, "ring": False, "circle_clip": False}
+    for _ in range(45):
+        s = p.evaluate("() => ({ u: document.querySelector('#login .screen-card').classList.contains('unlocking'), r: document.getElementById('app').classList.contains('reveal'), ring: !!document.querySelector('.portal-ring'), clip: getComputedStyle(document.getElementById('app')).clipPath })")
+        seen["unlocking"] |= s["u"]; seen["reveal"] |= s["r"]; seen["ring"] |= s["ring"]; seen["circle_clip"] |= s["clip"].startswith("circle")
+        if s["r"] and not seen.get("shot"): p.screenshot(path="e2e_transition.png"); seen["shot"] = True
+        time.sleep(0.06)
+    out["transition_phases_seen"] = {k: v for k, v in seen.items() if k != "shot"}
     p.wait_for_selector("#app:not(.hidden)"); p.wait_for_selector(".msg.ai")
+    end = p.evaluate("() => ({ loginHidden: document.getElementById('login').classList.contains('hidden'), reveal: document.getElementById('app').classList.contains('reveal'), ring: !!document.querySelector('.portal-ring'), opacity: getComputedStyle(document.getElementById('app')).opacity, clip: getComputedStyle(document.getElementById('app')).clipPath })")
+    out["transition_cleans_up"] = end["loginHidden"] and not end["reveal"] and not end["ring"] and end["opacity"] == "1" and end["clip"] == "none"
+    out["transition_works"] = all(out["transition_phases_seen"].values())
     out["app_chrome_animated"] = p.evaluate("() => ['.header', '.composer', '.msg'].every(s => getComputedStyle(document.querySelector(s)).animationName !== 'none')")
     out["usage_meter"] = p.inner_text("#usage-label")
+    msg_fs = lambda: p.evaluate("() => parseFloat(getComputedStyle(document.querySelector('.msg.ai')).fontSize)")
+    medium = msg_fs(); out["medium_text_px"] = medium
+    p.click("#menu-btn"); time.sleep(0.4)
+    out["menu_has_size_and_install"] = p.locator("#m-size").count() == 1 and p.locator("#m-install").is_visible()
+    p.click("#m-size"); large = msg_fs(); label_large = p.inner_text("#m-size-text")
+    p.click("#m-size"); small = msg_fs()
+    p.click("#m-size"); back = msg_fs(); label_back = p.inner_text("#m-size-text")
+    out["text_size_cycles"] = small < medium < large and back == medium and "Large" in label_large and "Medium" in label_back
+    out["medium_is_mid_size"] = medium >= 17
+    p.click("#m-install"); p.wait_for_selector("#install:not(.hidden)")
+    body = p.inner_text("#install-body")
+    out["install_sheet_instructions"] = "menu" in body.lower() and "Install" in body and "Offline helper: ready" in body or "Offline helper" in body
+    p.screenshot(path="e2e_install.png"); p.click("#install-close"); time.sleep(0.2)
     time.sleep(0.6)
 
     # ---- Enter sends; Shift+Enter is a new line ----
@@ -179,6 +206,14 @@ with sync_playwright() as pw:
     out["history_after_reload"] = p.locator(".msg.user").count() >= 5
     p.click("#menu-btn"); p.click("#m-logout"); p.wait_for_selector("#login:not(.hidden)"); out["lock_returns_to_login"] = True
     ctx.close()
+
+    fctx = b.new_context(viewport={"width": 360, "height": 780}, user_agent="Mozilla/5.0 (Android 8.1.0; Mobile; rv:130.0) Gecko/130.0 Firefox/130.0")
+    fp = fctx.new_page(); fp.goto(URL); fp.wait_for_selector("#login:not(.hidden)"); fp.fill("#password", "pw123"); fp.keyboard.press("Enter")
+    fp.wait_for_selector("#app:not(.hidden)", timeout=8000); time.sleep(1.6)
+    fp.click("#menu-btn"); time.sleep(0.4); fp.click("#m-install"); fp.wait_for_selector("#install:not(.hidden)")
+    fbody = fp.inner_text("#install-body")
+    out["fennec_install_instructions"] = "Fennec / Firefox" in fbody and "Tap Install" in fbody and "Add to Home screen" in fbody
+    fctx.close()
 
     rctx = b.new_context(viewport={"width": 360, "height": 780}, reduced_motion="reduce"); rp = rctx.new_page(); rp.goto(URL); rp.wait_for_selector("#login:not(.hidden)")
     out["reduced_motion_duration"] = rp.evaluate("() => getComputedStyle(document.querySelector('#login .screen-card > *')).animationDuration")

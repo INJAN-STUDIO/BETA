@@ -24,6 +24,8 @@ const ICONS = {
   'eye-off': '<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><path d="M1 1l22 22"/>',
   external: '<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/>',
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+  text: '<path d="M4 7V5h16v2M9 19h6M12 5v14"/>',
   'arrow-down': '<path d="M12 5v14M19 12l-7 7-7-7"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/>',
 };
@@ -81,6 +83,24 @@ async function copyText(text) {
     } catch (e2) { return false; }
   }
 }
+
+// Every button reacts when pressed: a ripple spreads from the touch point and the phone gives a
+// tiny buzz. (CSS also squashes the button a little while it's held down.)
+const reducedMotion = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+document.addEventListener('pointerdown', (e) => {
+  const btn = e.target.closest && e.target.closest('button');
+  if (!btn || btn.disabled) return;
+  if (navigator.vibrate) { try { navigator.vibrate(8); } catch (err) { /* not allowed */ } }
+  if (reducedMotion()) return;
+  const r = btn.getBoundingClientRect(), d = Math.max(r.width, r.height) * 2;
+  const s = document.createElement('span');
+  s.className = 'ripple';
+  s.style.width = s.style.height = d + 'px';
+  s.style.left = (e.clientX - r.left - d / 2) + 'px';
+  s.style.top = (e.clientY - r.top - d / 2) + 'px';
+  btn.appendChild(s);
+  s.addEventListener('animationend', () => s.remove());
+}, true);
 
 // tap inline code / URLs / link labels to copy
 document.addEventListener('click', async (e) => {
@@ -683,6 +703,7 @@ async function send() {
   }
   $('input').value = ''; autosize();
   attachments = []; renderChips();
+  const sb = $('send-btn'); sb.classList.remove('pulse'); void sb.offsetWidth; sb.classList.add('pulse');
   setBusy(true);
   showThinking();
   try {
@@ -747,6 +768,66 @@ $('menu').addEventListener('click', (e) => { if (e.target === $('menu')) hide('m
 $('memory').addEventListener('click', (e) => { if (e.target === $('memory')) hide('memory'); });
 $('memory-close').addEventListener('click', () => hide('memory'));
 $('lightbox').addEventListener('click', (e) => { if (e.target === $('lightbox')) hide('lightbox'); });
+
+// ---- text size (Small / Medium / Large) ----
+const TEXT_SIZES = [['Small', 0.9], ['Medium', 1], ['Large', 1.18]];
+let sizeIdx = Math.min(2, Math.max(0, parseInt(store.get('beta_size') || '1', 10) || 1));
+function applyTextSize() {
+  document.documentElement.style.setProperty('--ts', TEXT_SIZES[sizeIdx][1]);
+  $('m-size-text').textContent = 'Text size: ' + TEXT_SIZES[sizeIdx][0];
+}
+$('m-size').addEventListener('click', () => { sizeIdx = (sizeIdx + 1) % TEXT_SIZES.length; store.set('beta_size', String(sizeIdx)); applyTextSize(); });
+applyTextSize();
+
+// ---- install as an app ----
+// Chrome-type browsers fire "beforeinstallprompt" and we can open their install dialog. Firefox and
+// Fennec never do, so there the sheet just says exactly what to tap - and checks the things that
+// make Firefox hide the Install item (no service worker, private tab, not https).
+let installEvent = null;
+const isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; });
+window.addEventListener('appinstalled', () => { installEvent = null; toast('B.E.T.A. installed'); $('m-install').classList.add('hidden'); });
+if (isStandalone()) $('m-install').classList.add('hidden');
+
+function step(n, text) {
+  const row = document.createElement('div'); row.className = 'step';
+  const num = document.createElement('span'); num.className = 'num'; num.textContent = n;
+  const t = document.createElement('span'); t.textContent = text;
+  row.appendChild(num); row.appendChild(t);
+  return row;
+}
+async function showInstallHelp() {
+  const body = $('install-body');
+  body.innerHTML = '';
+  const firefox = /Firefox|Fennec/i.test(navigator.userAgent);
+  const p = document.createElement('p');
+  p.textContent = firefox ? 'In Fennec / Firefox:' : 'In your browser:';
+  body.appendChild(p);
+  body.appendChild(step(1, 'Tap the \u22EE menu (top right of the browser).'));
+  body.appendChild(step(2, firefox ? "Tap Install. (It appears in place of \"Add to Home screen\" when the app qualifies.)" : 'Tap Install app, or Add to Home screen.'));
+  body.appendChild(step(3, 'Confirm. B.E.T.A. gets its own icon and opens full-screen.'));
+  let reg = null;
+  try { reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null; } catch (e) { /* blocked */ }
+  const lines = [];
+  lines.push(window.isSecureContext ? 'Secure connection (https): yes' : 'Secure connection (https): NO - installing needs https');
+  lines.push('serviceWorker' in navigator ? 'Offline helper: ' + (reg ? 'ready' : 'not registered yet - reload once, wait a few seconds, then try the menu again') : 'Offline helper: BLOCKED by this browser (a Private tab or strict privacy setting) - Install will not appear until it is allowed');
+  lines.push('Currently installed: ' + (isStandalone() ? 'yes' : 'no'));
+  const status = document.createElement('div'); status.className = 'status'; status.textContent = lines.join('\n'); status.style.whiteSpace = 'pre-line';
+  body.appendChild(status);
+  show('install');
+}
+$('m-install').addEventListener('click', async () => {
+  hide('menu');
+  if (installEvent) {                       // Chrome-type browsers: open the real install dialog
+    installEvent.prompt();
+    try { await installEvent.userChoice; } catch (e) { /* dismissed */ }
+    installEvent = null;
+    return;
+  }
+  showInstallHelp();
+});
+$('install-close').addEventListener('click', () => hide('install'));
+$('install').addEventListener('click', (e) => { if (e.target === $('install')) hide('install'); });
 
 $('m-voice').addEventListener('click', () => {
   voiceOn = !voiceOn; store.set('beta_voice', voiceOn ? '1' : '0');
@@ -821,10 +902,32 @@ async function waitForServer() {
   }
 }
 
-async function startApp() {
-  showOnly('app');
-  let st;
-  try { st = await api('/api/state'); } catch (e) { addMessage('error', e.message); return; }
+// The "unlock" effect: the form drops away, the logo winds up and bursts, and the chat opens as a
+// circle that grows out of the logo. Used from the login screen (and the wake screen when you're
+// already logged in). Skipped for people who've asked their phone to reduce motion.
+async function openChatWithEffect(fromId) {
+  const from = $(fromId), logo = from && from.querySelector('.logo-wrap'), card = from && from.querySelector('.screen-card');
+  if (!logo || reducedMotion()) { showOnly('app'); return; }
+  const r = logo.getBoundingClientRect(), app = $('app'), pr = app.parentNode.getBoundingClientRect();
+  const cx = r.left + r.width / 2 - pr.left, cy = r.top + r.height / 2 - pr.top;   // relative to the app's container
+  card.classList.add('unlocking');
+  await sleep(420);                                    // wind-up: the form fades, the logo squashes
+  app.style.setProperty('--cx', cx + 'px'); app.style.setProperty('--cy', cy + 'px');
+  const ring = document.createElement('div');
+  ring.className = 'portal-ring'; ring.style.setProperty('--cx', cx + 'px'); ring.style.setProperty('--cy', cy + 'px');
+  app.parentNode.appendChild(ring);
+  app.classList.remove('hidden', 'leaving'); app.classList.add('reveal');
+  await sleep(1000);
+  app.classList.remove('reveal'); ring.remove();
+  from.classList.add('hidden'); card.classList.remove('unlocking');
+}
+
+async function startApp(fromId) {
+  const statePromise = api('/api/state').then((s) => ({ s }), (e) => ({ e }));   // load the chat while the effect plays
+  if (fromId) await openChatWithEffect(fromId); else showOnly('app');
+  const got = await statePromise;
+  if (got.e) { addMessage('error', got.e.message); return; }
+  const st = got.s;
   chat.innerHTML = '';
   if (st.setup_error) addMessage('error', st.setup_error);
   else if (!st.history.length) addMessage('ai', "Hi Karachi, I'm **B.E.T.A.** I can search the web, find photos, watch YouTube videos, read what you attach, and remember things for you. What do you need?");
@@ -848,7 +951,7 @@ async function doLogin() {
   try {
     await api('/api/login', { method: 'POST', body: { password: pw } });
     $('password').value = '';
-    startApp();
+    startApp('login');
   } catch (e) {
     $('login-error').textContent = e.message;
     const card = document.querySelector('#login .screen-card');
@@ -866,6 +969,6 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) scro
   try {
     const me = await api('/api/me');
     if (!me.configured) { $('wake-text').textContent = 'Server is missing BETA_PASSWORD.'; return; }
-    if (me.authed) startApp(); else showLogin();
+    if (me.authed) startApp('wake'); else showLogin();
   } catch (e) { showLogin(); }
 })();

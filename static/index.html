@@ -9,7 +9,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <title>B.E.T.A</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" href="/static/icon-192.png">
+<meta name="application-name" content="B.E.T.A">
+<link rel="icon" type="image/png" href="/static/icon-192.png">
 <link rel="apple-touch-icon" href="/static/icon-192.png">
 <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -18,7 +19,7 @@
 <!-- Waking the server (Render's free plan sleeps after 15 min idle) -->
 <div id="wake" class="screen">
   <div class="screen-card">
-    <div class="blob big"></div>
+    <div class="logo-wrap"><img class="logo-img" src="/static/logo.jpg" alt="B.E.T.A" width="116" height="116"><span class="logo-ring"></span></div>
     <div class="screen-title">B.E.T.A</div>
     <div id="wake-text" class="screen-sub">Connecting…</div>
     <div class="spinner"></div>
@@ -28,7 +29,7 @@
 <!-- Login -->
 <div id="login" class="screen hidden">
   <div class="screen-card">
-    <div class="blob big"></div>
+    <div class="logo-wrap"><img class="logo-img" src="/static/logo.jpg" alt="B.E.T.A" width="116" height="116"><span class="logo-ring"></span></div>
     <div class="screen-title">B.E.T.A</div>
     <div class="screen-sub">Best Everyday Technical Assistant</div>
     <input id="password" class="field" type="password" placeholder="Password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
@@ -83,9 +84,20 @@
     <div class="sheet-title">Menu</div>
     <button class="sheet-item" id="m-memory"><span data-icon="bookmark"></span>Long-term memory</button>
     <button class="sheet-item" id="m-voice"><span id="m-voice-icon" data-icon="speaker"></span><span id="m-voice-text">Read replies aloud: off</span></button>
+    <button class="sheet-item" id="m-size"><span data-icon="text"></span><span id="m-size-text">Text size: Medium</span></button>
+    <button class="sheet-item" id="m-install"><span data-icon="download"></span><span>Install as an app</span></button>
     <button class="sheet-item" id="m-clear"><span data-icon="trash"></span>Clear this conversation</button>
     <button class="sheet-item" id="m-logout"><span data-icon="logout"></span>Lock B.E.T.A.</button>
     <button class="sheet-close" id="menu-close">Close</button>
+  </div>
+</div>
+
+<!-- Install help (Firefox/Fennec have no install pop-up, so this says exactly what to tap) -->
+<div id="install" class="overlay hidden">
+  <div class="sheet">
+    <div class="sheet-title">Install B.E.T.A.</div>
+    <div id="install-body" class="sheet-text"></div>
+    <button class="sheet-close" id="install-close">Close</button>
   </div>
 </div>
 
