@@ -1,0 +1,28 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'app.beta.assistant'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'app.beta.assistant'
+        minSdk 26            // Android 8.0+ (your Honor 8X runs 8.1 or newer)
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+// No extra libraries on purpose: nothing from Google Play Services, nothing to track you.

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">B.E.T.A</string>
+    <!-- >>> CHANGE THIS to your own Render address (keep https, no trailing slash) <<< -->
+    <string name="beta_url" translatable="false">https://YOUR-SERVICE.onrender.com</string>
+</resources>

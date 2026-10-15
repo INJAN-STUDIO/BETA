@@ -1,0 +1,254 @@
+/* ====================================================================
+ * B.E.T.A. themes (menu -> Theme). Classic dark = style.css as is (ALPHA's original look).
+ *   icon-dark  - logo colours, dark (default)     icon-light - logo colours, light
+ *   light      - classic light
+ * Logo palette: B #147fb7 / #35b6d5 / #62d2de / #78edf4, teal background #3f89a0 -> #c5eaf2.
+ * Buttons and the text boxes keep ALPHA's own blue in every theme.
+ * ==================================================================== */
+
+/* ====================================================================
+ * LIGHT THEME (preview). Same layout and motion; only colours change.
+ * ==================================================================== */
+html[data-theme="light"] {
+  --bg: #f2f6fb; --panel: #ffffff; --accent: #1469c8; --accent-2: #0a66bd; --text: #0e1a2b; --dim: #556780;
+  --border: rgba(15,40,80,0.13); --danger: #c4283a; --warn: #7a4300; color-scheme: light;
+}
+html[data-theme="light"] * { scrollbar-color: rgba(15,40,80,0.28) transparent; }
+html[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(15,40,80,0.22); }
+@media (min-width: 560px) { html[data-theme="light"] body { background: #d9e2ed; } }
+
+html[data-theme="light"] .app { background: radial-gradient(circle at 15% -10%, rgba(30,155,255,0.16), transparent 48%), radial-gradient(circle at 100% 0%, rgba(138,92,255,0.08), transparent 40%), var(--bg); }
+html[data-theme="light"] .header { background: rgba(255,255,255,0.72); }
+html[data-theme="light"] .field { background: #fff; border-color: rgba(15,40,80,0.2); color: var(--text); }
+html[data-theme="light"] .field:focus { box-shadow: 0 0 0 4px rgba(20,105,200,0.18); }
+html[data-theme="light"] .btn-primary, html[data-theme="light"] .send-btn { background: linear-gradient(135deg, #1673d6, #0f5fbe); box-shadow: 0 4px 14px rgba(20,105,200,0.35); }
+html[data-theme="light"] .btn-primary.loading { background: linear-gradient(110deg, #0f5fbe 30%, #3fa0f5 50%, #0f5fbe 70%); background-size: 200% 100%; }
+html[data-theme="light"] .send-btn.stop { background: rgba(196,40,58,0.1); border-color: var(--danger); color: var(--danger); box-shadow: none; }
+html[data-theme="light"] .icon-btn { background: #fff; border-color: rgba(15,40,80,0.15); color: var(--text); box-shadow: 0 1px 2px rgba(15,40,80,0.08); }
+html[data-theme="light"] .icon-btn:active { background: rgba(20,105,200,0.15); }
+html[data-theme="light"] .icon-btn.active { color: var(--accent); background: rgba(20,105,200,0.12); border-color: var(--accent); }
+html[data-theme="light"] .meter-track { background: rgba(15,40,80,0.1); }
+html[data-theme="light"] .meter-fill { background: linear-gradient(90deg, #1469c8, #3aa6ff); }
+html[data-theme="light"] .meter-fill.low { background: var(--danger); }
+
+html[data-theme="light"] .msg.user { background: linear-gradient(135deg, #1673d6, #0f5fbe); border-color: rgba(15,95,190,0.7); color: #fff; box-shadow: 0 2px 8px rgba(15,95,190,0.28); }
+html[data-theme="light"] .msg.ai { background: #fff; border-color: rgba(15,40,80,0.12); box-shadow: 0 1px 3px rgba(15,40,80,0.08); }
+html[data-theme="light"] .msg.error { background: rgba(196,40,58,0.08); color: #8f1a29; border-color: rgba(196,40,58,0.5); }
+html[data-theme="light"] .msg.notice { background: none; box-shadow: none; border: none; }
+html[data-theme="light"] .attach-note { color: #d9ebff; }
+html[data-theme="light"] .activity { color: var(--accent); }
+html[data-theme="light"] .jump { background: #fff; color: var(--accent); border-color: rgba(20,105,200,0.5); box-shadow: 0 4px 14px rgba(15,40,80,0.2); }
+html[data-theme="light"] .composer-pill { background: #fff; border-color: rgba(15,40,80,0.17); box-shadow: 0 2px 12px rgba(15,40,80,0.09); }
+html[data-theme="light"] .composer-pill:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(20,105,200,0.15); }
+html[data-theme="light"] .input::placeholder { color: #5f7189; }
+html[data-theme="light"] .chip { background: rgba(20,105,200,0.1); border-color: rgba(20,105,200,0.4); color: #0a4f94; }
+html[data-theme="light"] .chip button { background: rgba(15,40,80,0.1); }
+
+html[data-theme="light"] .overlay { background: rgba(20,35,60,0.45); }
+html[data-theme="light"] .sheet { background: #fff; border-color: rgba(15,40,80,0.14); box-shadow: 0 -10px 40px rgba(15,40,80,0.22); }
+html[data-theme="light"] .sheet-item:active { background: rgba(20,105,200,0.12); }
+html[data-theme="light"] .sheet-item .ui-icon { color: var(--accent); }
+html[data-theme="light"] .sheet-close { background: rgba(15,40,80,0.06); border-color: rgba(15,40,80,0.15); color: var(--text); }
+html[data-theme="light"] .sheet-text { color: #20344e; }
+html[data-theme="light"] .sheet-text .num { background: rgba(20,105,200,0.12); border-color: rgba(20,105,200,0.5); color: var(--accent); }
+html[data-theme="light"] .sheet-text .status { background: rgba(15,40,80,0.06); color: var(--dim); }
+html[data-theme="light"] .mem-del { background: rgba(196,40,58,0.08); color: #b52434; border-color: rgba(196,40,58,0.4); }
+html[data-theme="light"] .toast { background: #fff; color: var(--accent); border-color: rgba(20,105,200,0.5); box-shadow: 0 6px 20px rgba(15,40,80,0.22); }
+html[data-theme="light"] .toast.failed { color: var(--danger); border-color: var(--danger); }
+
+html[data-theme="light"] .md strong { color: var(--text); }
+html[data-theme="light"] .md code { background: rgba(15,40,80,0.07); color: #0b3a6b; }
+html[data-theme="light"] .block { background: #f5f9fe; border-color: rgba(15,40,80,0.13); }
+html[data-theme="light"] .block-head { background: rgba(15,40,80,0.04); color: var(--dim); }
+html[data-theme="light"] .copy-btn { color: #3b5271; border-color: rgba(15,40,80,0.2); }
+html[data-theme="light"] .block pre { color: #12304f; }
+html[data-theme="light"] th { background: #e6eff9; color: var(--accent-2); }
+html[data-theme="light"] tbody tr:nth-child(even) td { background: rgba(15,40,80,0.05); }
+
+html[data-theme="light"] .reveal-all { background: #fff; border-color: rgba(15,40,80,0.2); color: var(--text); }
+html[data-theme="light"] .banner { background: rgba(255,170,60,0.16); border-color: rgba(200,120,0,0.5); color: #7a4300; }
+html[data-theme="light"] .tile { background: #dce6f1; border-color: rgba(15,40,80,0.14); }
+html[data-theme="light"] .tile.blurred .veil { color: #fff; }
+html[data-theme="light"] .veil .ui-icon { color: #ffd08a; }
+html[data-theme="light"] .veil-hint { color: #9fe0ff; }
+
+html[data-theme="light"] .spinner { border-color: rgba(15,40,80,0.12); border-top-color: var(--accent); }
+html[data-theme="light"] .logo-img { box-shadow: 0 12px 34px rgba(20,105,200,0.35), 0 0 0 1px rgba(15,40,80,0.12); }
+html[data-theme="light"] .logo-ring { border-color: rgba(20,105,200,0.5); }
+html[data-theme="light"] .ripple { background: rgba(20,105,200,0.28); }
+html[data-theme="light"] .dots i { background: var(--accent); }
+html[data-theme="light"] .portal-ring { border-color: rgba(20,105,200,0.9); box-shadow: 0 0 30px 6px rgba(20,105,200,0.45), inset 0 0 30px 6px rgba(20,105,200,0.3); }
+
+/* smooth cross-fade while flipping theme */
+html.theme-anim * { transition: background-color 0.35s ease, color 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease !important; }
+
+
+/* ====================================================================
+ * ICON THEME - DARK. Every colour comes from the B.E.T.A. logo:
+ *   B shadow #147fb7 · deep #2e97b5 · mid #35b6d5 · light #62d2de · highlight #78edf4
+ *   teal background #3f89a0 -> #88c7d4 -> glow #c5eaf2 (hue ~190deg)
+ * ==================================================================== */
+html[data-theme="icon-dark"] {
+  --bg: #051a22; --panel: #0a2630; --accent: #35b6d5; --accent-2: #7fe3ee; --text: #e9f8fb; --dim: #86aab5;
+  --border: rgba(120,215,230,0.16); --danger: #ff6b7a; --warn: #ffc680; color-scheme: dark;
+}
+html[data-theme="icon-dark"] * { scrollbar-color: rgba(120,215,230,0.3) transparent; }
+html[data-theme="icon-dark"] ::-webkit-scrollbar-thumb { background: rgba(120,215,230,0.22); }
+@media (min-width: 560px) { html[data-theme="icon-dark"] body { background: #02100f; } }
+
+html[data-theme="icon-dark"] .screen { background: radial-gradient(circle at 50% 28%, rgba(53,182,213,0.30), transparent 58%), var(--bg); }
+html[data-theme="icon-dark"] .app { background: radial-gradient(circle at 12% -8%, rgba(98,210,222,0.26), transparent 46%), radial-gradient(circle at 100% 0%, rgba(20,127,183,0.2), transparent 42%), var(--bg); }
+html[data-theme="icon-dark"] .header { background: rgba(7,34,44,0.72); }
+html[data-theme="icon-dark"] .meter-track { background: rgba(120,215,230,0.14); }
+html[data-theme="icon-dark"] .meter-fill { background: linear-gradient(90deg, #1c93c4, #62d2de, #9af0f6); }
+html[data-theme="icon-dark"] .meter-fill.low { background: var(--danger); }
+
+html[data-theme="icon-dark"] .msg.user { background: linear-gradient(135deg, #127ba6, #0a5a85); border-color: rgba(98,210,222,0.5); color: #fff; box-shadow: 0 2px 10px rgba(5,60,90,0.45); }
+html[data-theme="icon-dark"] .msg.ai { background: #0a2630; border-color: rgba(120,215,230,0.16); box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+html[data-theme="icon-dark"] .attach-note { color: #d6f1f7; }
+html[data-theme="icon-dark"] .jump { background: rgba(7,34,44,0.95); border-color: rgba(98,210,222,0.55); color: var(--accent-2); }
+html[data-theme="icon-dark"] .chip { background: rgba(53,182,213,0.14); border-color: rgba(98,210,222,0.45); color: #cdf3f9; }
+html[data-theme="icon-dark"] .chip button { background: rgba(120,215,230,0.14); }
+
+html[data-theme="icon-dark"] .overlay { background: rgba(2,14,19,0.8); }
+html[data-theme="icon-dark"] .sheet { background: linear-gradient(180deg, #0b2933, #06202a); border-color: rgba(98,210,222,0.35); }
+html[data-theme="icon-dark"] .sheet-item:active { background: rgba(53,182,213,0.2); }
+html[data-theme="icon-dark"] .sheet-close { background: rgba(120,215,230,0.08); border-color: rgba(120,215,230,0.22); }
+html[data-theme="icon-dark"] .sheet-text { color: #cfe9ef; }
+html[data-theme="icon-dark"] .sheet-text .num { background: rgba(53,182,213,0.2); border-color: rgba(98,210,222,0.5); color: var(--accent-2); }
+html[data-theme="icon-dark"] .sheet-text .status { background: rgba(120,215,230,0.08); }
+html[data-theme="icon-dark"] .toast { background: rgba(7,34,44,0.97); border-color: rgba(98,210,222,0.6); color: var(--accent-2); }
+
+html[data-theme="icon-dark"] .md code { background: rgba(120,215,230,0.12); color: #d4f3f8; }
+html[data-theme="icon-dark"] .block { background: #06202a; border-color: rgba(120,215,230,0.18); }
+html[data-theme="icon-dark"] .block-head { background: rgba(120,215,230,0.06); }
+html[data-theme="icon-dark"] .copy-btn { color: #bfe4ec; border-color: rgba(120,215,230,0.24); }
+html[data-theme="icon-dark"] .block pre { color: #d4f3f8; }
+html[data-theme="icon-dark"] th { background: #0a2a35; color: var(--accent-2); }
+html[data-theme="icon-dark"] tbody tr:nth-child(even) td { background: rgba(120,215,230,0.07); }
+html[data-theme="icon-dark"] .reveal-all { background: rgba(120,215,230,0.08); border-color: rgba(120,215,230,0.24); }
+html[data-theme="icon-dark"] .tile { background: #06202a; border-color: rgba(120,215,230,0.18); }
+
+html[data-theme="icon-dark"] .logo-img { box-shadow: 0 12px 40px rgba(53,182,213,0.45), 0 0 0 1px rgba(160,235,245,0.22); }
+html[data-theme="icon-dark"] .logo-ring { border-color: rgba(98,210,222,0.6); }
+html[data-theme="icon-dark"] .ripple { background: rgba(130,230,240,0.45); }
+html[data-theme="icon-dark"] .dots i { background: var(--accent-2); }
+html[data-theme="icon-dark"] .spinner { border-color: rgba(120,215,230,0.14); border-top-color: var(--accent); }
+html[data-theme="icon-dark"] .portal-ring { border-color: rgba(154,240,246,0.95); box-shadow: 0 0 36px 8px rgba(53,182,213,0.65), inset 0 0 36px 6px rgba(53,182,213,0.45); }
+html[data-theme="icon-dark"] .lightbox { background: rgba(2,12,16,0.96); }
+
+/* ALPHA-style black reply bubbles (and the black code/table/photo surfaces that sit inside them) */
+html[data-theme="icon-dark"] .msg.ai { background: #0b0d12; border-color: rgba(255,255,255,0.1); box-shadow: 0 2px 10px rgba(0,0,0,0.45); }
+html[data-theme="icon-dark"] .block { background: #05070b; border-color: rgba(255,255,255,0.1); }
+html[data-theme="icon-dark"] .block-head { background: rgba(255,255,255,0.04); }
+html[data-theme="icon-dark"] th { background: #0a161b; color: var(--accent-2); }
+html[data-theme="icon-dark"] tbody tr:nth-child(even) td { background: rgba(255,255,255,0.05); }
+html[data-theme="icon-dark"] .md code { background: rgba(255,255,255,0.09); color: #d4f3f8; }
+html[data-theme="icon-dark"] .tile { background: #05070b; border-color: rgba(255,255,255,0.1); }
+
+
+/* Buttons and the text boxes keep ALPHA's own colours: blue gradient buttons and the near-black input pill. */
+html[data-theme="icon-dark"] .btn-primary, html[data-theme="icon-dark"] .send-btn { background: linear-gradient(135deg, #2ab0ff, #1272e0); color: #fff; box-shadow: 0 4px 16px rgba(30,155,255,0.4); }
+html[data-theme="icon-dark"] .btn-primary.loading { background: linear-gradient(110deg, #1272e0 30%, #52c0ff 50%, #1272e0 70%); background-size: 200% 100%; }
+html[data-theme="icon-dark"] .send-btn.stop { background: rgba(255,77,94,0.18); border: 1px solid #ff4d5e; color: #ff9aa5; box-shadow: none; }
+html[data-theme="icon-dark"] .field { background: #0b0d13; border-color: rgba(255,255,255,0.1); }
+html[data-theme="icon-dark"] .field:focus { border-color: #1e9bff; box-shadow: 0 0 0 4px rgba(30,155,255,0.22); }
+html[data-theme="icon-dark"] .composer-pill { background: #0d1017; border-color: rgba(255,255,255,0.12); }
+html[data-theme="icon-dark"] .composer-pill:focus-within { border-color: rgba(46,170,255,0.8); box-shadow: 0 0 0 3px rgba(30,155,255,0.18); }
+html[data-theme="icon-dark"] .icon-btn { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.1); }
+html[data-theme="icon-dark"] .icon-btn:active { background: rgba(30,155,255,0.25); }
+html[data-theme="icon-dark"] .icon-btn.active { color: #6fd2ff; border-color: #1e9bff; background: rgba(30,155,255,0.2); }
+
+
+/* ====================================================================
+ * LIGHT THEME (preview). Same layout and motion; only colours change.
+ * ==================================================================== */
+html[data-theme="icon-light"] {
+  --bg: #e8f5f8; --panel: #ffffff; --accent: #0e6e9e; --accent-2: #0b6a96; --text: #06212b; --dim: #4a6e7b;
+  --border: rgba(8,60,80,0.13); --danger: #c4283a; --warn: #7a4300; color-scheme: light;
+}
+html[data-theme="icon-light"] * { scrollbar-color: rgba(8,60,80,0.28) transparent; }
+html[data-theme="icon-light"] ::-webkit-scrollbar-thumb { background: rgba(8,60,80,0.22); }
+@media (min-width: 560px) { html[data-theme="icon-light"] body { background: #cfe3e9; } }
+
+html[data-theme="icon-light"] .app { background: radial-gradient(circle at 15% -10%, rgba(98,210,222,0.34), transparent 48%), radial-gradient(circle at 100% 0%, rgba(20,127,183,0.10), transparent 40%), var(--bg); }
+html[data-theme="icon-light"] .header { background: rgba(255,255,255,0.72); }
+html[data-theme="icon-light"] .field { background: #fff; border-color: rgba(8,60,80,0.2); color: var(--text); }
+html[data-theme="icon-light"] .field:focus { box-shadow: 0 0 0 4px rgba(14,110,158,0.18); }
+html[data-theme="icon-light"] .btn-primary, html[data-theme="icon-light"] .send-btn { background: linear-gradient(135deg, #127ba6, #0a5a85); box-shadow: 0 4px 14px rgba(14,110,158,0.35); }
+html[data-theme="icon-light"] .btn-primary.loading { background: linear-gradient(110deg, #0a5a85 30%, #3fa0f5 50%, #0a5a85 70%); background-size: 200% 100%; }
+html[data-theme="icon-light"] .send-btn.stop { background: rgba(196,40,58,0.1); border-color: var(--danger); color: var(--danger); box-shadow: none; }
+html[data-theme="icon-light"] .icon-btn { background: #fff; border-color: rgba(8,60,80,0.15); color: var(--text); box-shadow: 0 1px 2px rgba(8,60,80,0.08); }
+html[data-theme="icon-light"] .icon-btn:active { background: rgba(14,110,158,0.15); }
+html[data-theme="icon-light"] .icon-btn.active { color: var(--accent); background: rgba(14,110,158,0.12); border-color: var(--accent); }
+html[data-theme="icon-light"] .meter-track { background: rgba(8,60,80,0.1); }
+html[data-theme="icon-light"] .meter-fill { background: linear-gradient(90deg, #0e6e9e, #35b6d5); }
+html[data-theme="icon-light"] .meter-fill.low { background: var(--danger); }
+
+html[data-theme="icon-light"] .msg.user { background: linear-gradient(135deg, #127ba6, #0a5a85); border-color: rgba(15,95,190,0.7); color: #fff; box-shadow: 0 2px 8px rgba(15,95,190,0.28); }
+html[data-theme="icon-light"] .msg.ai { background: #fff; border-color: rgba(8,60,80,0.12); box-shadow: 0 1px 3px rgba(8,60,80,0.08); }
+html[data-theme="icon-light"] .msg.error { background: rgba(196,40,58,0.08); color: #8f1a29; border-color: rgba(196,40,58,0.5); }
+html[data-theme="icon-light"] .msg.notice { background: none; box-shadow: none; border: none; }
+html[data-theme="icon-light"] .attach-note { color: #d9ebff; }
+html[data-theme="icon-light"] .activity { color: var(--accent); }
+html[data-theme="icon-light"] .jump { background: #fff; color: var(--accent); border-color: rgba(14,110,158,0.5); box-shadow: 0 4px 14px rgba(8,60,80,0.2); }
+html[data-theme="icon-light"] .composer-pill { background: #fff; border-color: rgba(8,60,80,0.17); box-shadow: 0 2px 12px rgba(8,60,80,0.09); }
+html[data-theme="icon-light"] .composer-pill:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(14,110,158,0.15); }
+html[data-theme="icon-light"] .input::placeholder { color: #587783; }
+html[data-theme="icon-light"] .chip { background: rgba(14,110,158,0.1); border-color: rgba(14,110,158,0.4); color: #0a5878; }
+html[data-theme="icon-light"] .chip button { background: rgba(8,60,80,0.1); }
+
+html[data-theme="icon-light"] .overlay { background: rgba(6,40,52,0.5); }
+html[data-theme="icon-light"] .sheet { background: #fff; border-color: rgba(8,60,80,0.14); box-shadow: 0 -10px 40px rgba(8,60,80,0.22); }
+html[data-theme="icon-light"] .sheet-item:active { background: rgba(14,110,158,0.12); }
+html[data-theme="icon-light"] .sheet-item .ui-icon { color: var(--accent); }
+html[data-theme="icon-light"] .sheet-close { background: rgba(8,60,80,0.06); border-color: rgba(8,60,80,0.15); color: var(--text); }
+html[data-theme="icon-light"] .sheet-text { color: #1b4250; }
+html[data-theme="icon-light"] .sheet-text .num { background: rgba(14,110,158,0.12); border-color: rgba(14,110,158,0.5); color: var(--accent); }
+html[data-theme="icon-light"] .sheet-text .status { background: rgba(8,60,80,0.06); color: var(--dim); }
+html[data-theme="icon-light"] .mem-del { background: rgba(196,40,58,0.08); color: #b52434; border-color: rgba(196,40,58,0.4); }
+html[data-theme="icon-light"] .toast { background: #fff; color: var(--accent); border-color: rgba(14,110,158,0.5); box-shadow: 0 6px 20px rgba(8,60,80,0.22); }
+html[data-theme="icon-light"] .toast.failed { color: var(--danger); border-color: var(--danger); }
+
+html[data-theme="icon-light"] .md strong { color: var(--text); }
+html[data-theme="icon-light"] .md code { background: rgba(8,60,80,0.07); color: #07485f; }
+html[data-theme="icon-light"] .block { background: #f0f9fb; border-color: rgba(8,60,80,0.13); }
+html[data-theme="icon-light"] .block-head { background: rgba(8,60,80,0.04); color: var(--dim); }
+html[data-theme="icon-light"] .copy-btn { color: #34606f; border-color: rgba(8,60,80,0.2); }
+html[data-theme="icon-light"] .block pre { color: #0a3a4d; }
+html[data-theme="icon-light"] th { background: #d8eef4; color: var(--accent-2); }
+html[data-theme="icon-light"] tbody tr:nth-child(even) td { background: rgba(8,60,80,0.05); }
+
+html[data-theme="icon-light"] .reveal-all { background: #fff; border-color: rgba(8,60,80,0.2); color: var(--text); }
+html[data-theme="icon-light"] .banner { background: rgba(255,170,60,0.16); border-color: rgba(200,120,0,0.5); color: #7a4300; }
+html[data-theme="icon-light"] .tile { background: #cfe6ec; border-color: rgba(8,60,80,0.14); }
+html[data-theme="icon-light"] .tile.blurred .veil { color: #fff; }
+html[data-theme="icon-light"] .veil .ui-icon { color: #ffd08a; }
+html[data-theme="icon-light"] .veil-hint { color: #9fe0ff; }
+
+html[data-theme="icon-light"] .spinner { border-color: rgba(8,60,80,0.12); border-top-color: var(--accent); }
+html[data-theme="icon-light"] .logo-img { box-shadow: 0 12px 34px rgba(14,110,158,0.35), 0 0 0 1px rgba(8,60,80,0.12); }
+html[data-theme="icon-light"] .logo-ring { border-color: rgba(14,110,158,0.5); }
+html[data-theme="icon-light"] .ripple { background: rgba(14,110,158,0.28); }
+html[data-theme="icon-light"] .dots i { background: var(--accent); }
+html[data-theme="icon-light"] .portal-ring { border-color: rgba(14,110,158,0.9); box-shadow: 0 0 30px 6px rgba(14,110,158,0.45), inset 0 0 30px 6px rgba(14,110,158,0.3); }
+
+/* smooth cross-fade while flipping theme */
+html.theme-anim * { transition: background-color 0.35s ease, color 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease !important; }
+
+html[data-theme="icon-light"] .screen { background: radial-gradient(circle at 50% 28%, rgba(98,210,222,0.38), transparent 58%), var(--bg); }
+html[data-theme="icon-light"] .logo-img { box-shadow: 0 12px 34px rgba(14,110,158,0.35), 0 0 0 1px rgba(8,60,80,0.14); }
+
+/* Buttons and the text boxes keep ALPHA's own blue. */
+html[data-theme="icon-light"] .btn-primary, html[data-theme="icon-light"] .send-btn { background: linear-gradient(135deg, #1673d6, #0f5fbe); color: #fff; box-shadow: 0 4px 14px rgba(20,105,200,0.35); }
+html[data-theme="icon-light"] .btn-primary.loading { background: linear-gradient(110deg, #0f5fbe 30%, #3fa0f5 50%, #0f5fbe 70%); background-size: 200% 100%; }
+html[data-theme="icon-light"] .field:focus { border-color: #1469c8; box-shadow: 0 0 0 4px rgba(20,105,200,0.18); }
+html[data-theme="icon-light"] .composer-pill:focus-within { border-color: #1469c8; box-shadow: 0 0 0 3px rgba(20,105,200,0.15); }
+html[data-theme="icon-light"] .icon-btn:active { background: rgba(20,105,200,0.15); }
+html[data-theme="icon-light"] .icon-btn.active { color: #1469c8; background: rgba(20,105,200,0.12); border-color: #1469c8; }
+
+
+/* v6 additions in the light themes */
+html[data-theme="light"] .listen-btn, html[data-theme="icon-light"] .listen-btn, html[data-theme="light"] .video-link, html[data-theme="icon-light"] .video-link { background: rgba(15,40,80,0.05); }
+html[data-theme="light"] .listen-btn.playing, html[data-theme="icon-light"] .listen-btn.playing { background: rgba(20,105,200,0.12); color: #0a66bd; border-color: #1469c8; }
+html[data-theme="light"] .gen-tile, html[data-theme="icon-light"] .gen-tile { background: #dce6f1; }
