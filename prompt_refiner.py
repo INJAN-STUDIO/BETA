@@ -51,7 +51,8 @@ MAX_REFS = 3             # reference pictures to show the vision model
 MAX_CHARACTERS = 2
 MAX_FLUX2_REFS = 4       # FLUX.2 [dev] takes at most 4 reference pictures per image
 REF_MAX_PX = 480         # ...and each must be under 512x512
-IMG_CACHE_PREFIX = "char_img:"
+IMG_CACHE_PREFIX = "char_img2:"   # v2: older entries held tiny pictures
+MIN_REF_PX = 128         # Cloudflare rejects pictures under 64px; under ~128px they are useless as a reference anyway
 CACHE_KEY = "char_refs"
 CACHE_LIMIT = 150
 OVERRIDE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "characters.json")
@@ -270,7 +271,23 @@ def _tile_image(tile):
     return (mime, raw) if mime else None
 
 
+def _data_url_image(data_url):
+    """(mime, bytes) from a data: URL, or None."""
+    if not isinstance(data_url, str) or ";base64," not in data_url:
+        return None
+    try:
+        raw = base64.b64decode(data_url.split(",", 1)[1])
+    except Exception:
+        return None
+    mime = image_search._sniff_mime(raw)
+    return (mime, raw) if mime else None
+
+
 def _fetch_references(name, series, env):
+    """Reference pictures for a character, as [(mime, bytes), ...].
+    Prefers the FULL-size pictures (image_search's safe downloader: public hosts only, size caps, real-image check),
+    because the search thumbnails are only ~2 KB - under the 64px minimum Cloudflare accepts. If no full-size
+    picture can be downloaded, falls back to the thumbnails (fine for describing, too small for FLUX.2)."""
     key = (env.get("SERPER_API_KEY") or "").strip()
     if not key:
         return []
@@ -278,9 +295,27 @@ def _fetch_references(name, series, env):
     results = image_search.search_serper_images(key, query, MAX_REFS + 3)
     if not results:
         return []
+
+    # 1) full-size pictures (skip ones Serper says are small), downloaded in parallel
+    cands = [r for r in results if r.get("full_url")
+             and min(r.get("width") or 9999, r.get("height") or 9999) >= 256][:MAX_REFS + 3]
+    out = []
+    if cands:
+        limit = min(getattr(image_search, "FULL_MAX_BYTES", 3_000_000), 3_000_000)
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                loaded = list(pool.map(lambda it: image_search.fetch_image_data_url(it["full_url"], max_bytes=limit), cands))
+            out = [i for i in (_data_url_image(u) for u in loaded) if i]
+        except Exception as e:
+            _log("full-size download failed: %s" % e)
+            out = []
+    if out:
+        return out[:MAX_REFS + 2]                  # a couple of spares in case one can't be shrunk
+
+    # 2) fallback: the small thumbnails
     tiles = image_search.build_gallery(results, want=MAX_REFS) or []
-    imgs = [_tile_image(t) for t in tiles]
-    return [i for i in imgs if i][:MAX_REFS]
+    return [i for i in (_tile_image(t) for t in tiles) if i][:MAX_REFS]
 
 
 DESCRIBE_SYSTEM = ("You describe how a fictional character looks so an artist who has never seen them can draw "
@@ -308,13 +343,26 @@ def _shrink_for_flux2(raw):
     """JPEG bytes at most REF_MAX_PX on the long side (FLUX.2 wants references under 512x512). None without Pillow."""
     try:
         from PIL import Image
-        im = Image.open(io.BytesIO(raw)).convert("RGB")
+        im = Image.open(io.BytesIO(raw))
+        try:
+            im.draft("RGB", (REF_MAX_PX * 2, REF_MAX_PX * 2))   # JPEG: decode at reduced size, saves memory on Render
+        except Exception:
+            pass
         im.thumbnail((REF_MAX_PX, REF_MAX_PX))
+        im = im.convert("RGB")
         out = io.BytesIO()
         im.save(out, "JPEG", quality=85, optimize=True)
         return out.getvalue()
     except Exception:
         return None
+
+
+def _img_size(raw):
+    try:
+        from PIL import Image
+        return Image.open(io.BytesIO(raw)).size
+    except Exception:
+        return (0, 0)
 
 
 def _prepared_refs(char, env, store, memo=None):
@@ -343,6 +391,8 @@ def _prepared_refs(char, env, store, memo=None):
                 small = _shrink_for_flux2(raw)
                 if small:
                     out.append(("image/jpeg", small))
+                if len(out) >= MAX_REFS:
+                    break
         except Exception as e:
             _log("reference pictures unavailable for %s: %s" % (name, e))
             out = []
@@ -459,7 +509,11 @@ def refine_for_image(prompt, aspect, env, chat_key):
         refs, notes = [], []
         for c in chars:
             try:
-                got = _prepared_refs(c, env, store, memo)[:per]
+                allrefs = _prepared_refs(c, env, store, memo)
+                got = [r for r in allrefs if min(_img_size(r[1])) >= MIN_REF_PX][:per]
+                if allrefs and not got:
+                    _log("reference pictures for %s are too small for FLUX.2 (sizes %s, need at least %dpx) - "
+                         "using the text-only model" % (c.get("name"), [_img_size(r[1]) for r in allrefs], MIN_REF_PX))
             except Exception as e:
                 _log("reference pictures failed for %s: %s" % (c.get("name"), e))
                 got = []
