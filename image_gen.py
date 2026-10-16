@@ -13,7 +13,7 @@ Two providers (see generate_any):
     other customers. (FLUX.1 schnell is open-source, made by Black Forest Labs.)
 
 Reference pictures: when a request names a character, prompt_refiner also hands back 2-3 small reference pictures and
-generate_any() sends them to FLUX.2 [dev] on Cloudflare (it can draw from up to 4 pictures). On any failure it falls back
+generate_any() sends them to FLUX.2 [klein 4B] on Cloudflare (it can draw from up to 4 pictures). On any failure it falls back
 to FLUX.1 schnell with the refined text prompt. Switch off with USE_REFERENCE_IMAGES=off. Needs Pillow.
 
 Prompt refiner: before a Cloudflare picture is drawn, prompt_refiner.py works out which fictional characters the
@@ -49,8 +49,10 @@ STORE_LIMIT = 12
 CF_ROOT = "https://api.cloudflare.com/client/v4/accounts"
 CF_MODEL = "@cf/black-forest-labs/flux-1-schnell"
 CF_LABEL = "FLUX.1 schnell on Cloudflare"
-CF_REF_MODEL = "@cf/black-forest-labs/flux-2-dev"      # can draw from up to 4 reference pictures
-CF_REF_LABEL = "FLUX.2 dev on Cloudflare (with reference pictures)"
+# FLUX.2 models that can draw from up to 4 reference pictures. klein-4b is the default because it is cheap
+# (about 120 Neurons per 1-megapixel picture with 3 references, vs about 4,100 for flux-2-dev at 20 steps).
+CF_REF_MODEL = "@cf/black-forest-labs/flux-2-klein-4b"
+CF_REF_LABEL = "FLUX.2 on Cloudflare (with reference pictures)"
 GOOGLE_LABEL = "Gemini"
 _CF_ACCOUNT_RE = re.compile(r"^[A-Za-z0-9]{8,64}$")
 
@@ -232,7 +234,7 @@ def generate_cloudflare(account_id, token, prompt, aspect="1:1", steps=4, timeou
 
 
 # ---------------------------------------------------------------------------
-# Cloudflare Workers AI - FLUX.2 [dev] with reference pictures
+# Cloudflare Workers AI - FLUX.2 with reference pictures
 # ---------------------------------------------------------------------------
 
 def _multipart(fields, files):
@@ -261,24 +263,9 @@ def _flux2_size(aspect):
     return clamp(a * scale), clamp(b * scale)
 
 
-def generate_cloudflare_flux2(account_id, token, prompt, refs, aspect="1:1", steps=20, model=None, timeout=120):
-    """FLUX.2 [dev] with up to 4 reference pictures ([(mime, bytes), ...], each under 512x512).
-    Same return shape as generate(). Raises ImageGenError with a message safe to show."""
-    prompt = (prompt or "").strip()[:1900]
-    if not prompt:
-        raise ImageGenError("There was no description of the picture to make.")
-    if not refs:
-        raise ImageGenError("No reference pictures to draw from.")
-    if not _CF_ACCOUNT_RE.match(account_id or ""):
-        raise ImageGenError("CLOUDFLARE_ACCOUNT_ID doesn't look right (it's the long code on your Cloudflare dashboard).")
-    aspect = aspect if aspect in ASPECTS else "1:1"
-    w, h = _flux2_size(aspect)
-    fields = {"prompt": prompt, "steps": max(1, min(50, int(steps))), "width": w, "height": h}
-    files = {}
-    for i, (mime, data) in enumerate(refs[:4]):
-        files["input_image_%d" % i] = ("ref%d.jpg" % i, mime or "image/jpeg", data)
+def _flux2_request(url, token, fields, files, timeout):
+    """One multipart call to a FLUX.2 model. Returns the decoded result dict or raises ImageGenError."""
     body, ctype = _multipart(fields, files)
-    url = "%s/%s/ai/run/%s" % (CF_ROOT, account_id, (model or CF_REF_MODEL).strip())
     req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Content-Type": ctype, "Authorization": "Bearer " + token})
     try:
@@ -299,6 +286,46 @@ def generate_cloudflare_flux2(account_id, token, prompt, refs, aspect="1:1", ste
     if not data.get("success", True):
         errs = data.get("errors") or [{}]
         raise ImageGenError(_cf_error_message(400, " ".join("%s %s" % (x.get("code", ""), x.get("message", "")) for x in errs)))
+    return data
+
+
+def generate_cloudflare_flux2(account_id, token, prompt, refs, aspect="1:1", steps=20, model=None, timeout=120):
+    """FLUX.2 (klein 4B by default) with up to 4 reference pictures ([(mime, bytes), ...], each under 512x512).
+    Same return shape as generate(). Raises ImageGenError with a message safe to show.
+
+    'steps' is only sent to flux-2-dev: the klein models have a fixed number of steps and may reject the field.
+    If Cloudflare answers "Invalid input", it is retried once with only the prompt and pictures (no size/steps) and
+    the log says which version worked - that tells us which field the model didn't like."""
+    prompt = (prompt or "").strip()[:1900]
+    if not prompt:
+        raise ImageGenError("There was no description of the picture to make.")
+    if not refs:
+        raise ImageGenError("No reference pictures to draw from.")
+    if not _CF_ACCOUNT_RE.match(account_id or ""):
+        raise ImageGenError("CLOUDFLARE_ACCOUNT_ID doesn't look right (it's the long code on your Cloudflare dashboard).")
+    aspect = aspect if aspect in ASPECTS else "1:1"
+    model = (model or CF_REF_MODEL).strip()
+    w, h = _flux2_size(aspect)
+    full = {"prompt": prompt, "width": w, "height": h}
+    if "flux-2-dev" in model:
+        full["steps"] = max(1, min(50, int(steps)))
+    minimal = {"prompt": prompt}
+    files = {}
+    for i, (mime, data) in enumerate(refs[:4]):
+        files["input_image_%d" % i] = ("ref%d.jpg" % i, mime or "image/jpeg", data)
+    url = "%s/%s/ai/run/%s" % (CF_ROOT, account_id, model)
+
+    try:
+        data = _flux2_request(url, token, full, files, timeout)
+    except ImageGenError as e:
+        text = e.user_message.lower()
+        if "invalid input" not in text and "8001" not in text:
+            raise
+        print("[B.E.T.A.] %s said 'Invalid input' with fields=%s, image sizes=%s bytes. Retrying with prompt + pictures only."
+              % (model, sorted(full), [len(r[1]) for r in refs[:4]]))
+        data = _flux2_request(url, token, minimal, files, timeout)
+        print("[B.E.T.A.] The retry WORKED, so the size/steps fields were the problem (picture comes out at the default shape).")
+
     b64 = (data.get("result") or {}).get("image")
     if not b64:
         raise ImageGenError("Cloudflare's FLUX.2 model didn't return a picture. Try again.")
@@ -354,18 +381,19 @@ def generate_any(prompt, aspect, env, chat_key):
     for name in order:
         try:
             if name == "cloudflare":
-                # 1) a named character with reference pictures -> FLUX.2 [dev], which can draw from pictures.
+                # 1) a named character with reference pictures -> FLUX.2 (klein 4B), which can draw from pictures.
                 #    If it fails for any reason (quota, error), quietly carry on with schnell below.
                 if refined.get("refs") and (env.get("USE_REFERENCE_IMAGES") or "on").strip().lower() not in ("off", "0", "false", "no"):
                     try:
-                        steps2 = int(env.get("CF_REF_STEPS") or 20)
+                        steps2 = int(env.get("CF_REF_STEPS") or 20)           # only used by flux-2-dev
                     except ValueError:
                         steps2 = 20
+                    ref_model = (env.get("CF_REF_MODEL") or CF_REF_MODEL).strip()
                     try:
                         imgs = generate_cloudflare_flux2(env["CLOUDFLARE_ACCOUNT_ID"].strip(), env["CLOUDFLARE_API_TOKEN"].strip(),
                                                          refined["ref_prompt"], refined["refs"], aspect=aspect, steps=steps2,
-                                                         model=env.get("CF_REF_MODEL"))
-                        return imgs, CF_REF_LABEL, "cloudflare-flux-2-dev"
+                                                         model=ref_model)
+                        return imgs, CF_REF_LABEL, "cloudflare-" + ref_model.split("/")[-1]
                     except ImageGenError as e:
                         print("[B.E.T.A.] FLUX.2 with reference pictures failed, using schnell instead: %s" % e.user_message)
                 # 2) text-only FLUX schnell. Characters get a few more steps (more detail) - costs more of the daily free allowance
