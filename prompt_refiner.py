@@ -14,6 +14,9 @@ Steps (refine_for_image):
                    traits they share, then save that to the cache so it only ever happens once per character.
   3. REFINE   - rewrite the request as one flowing ~80-word paragraph that spells those traits out.
 
+  4. REFERENCES - the same 2-3 reference thumbnails (shrunk to under 512px and cached, one store key per character)
+                are handed back so image_gen.py can give them to FLUX.2 [dev], which can draw from pictures.
+
 Safety net: every step is wrapped so that ANY problem (no key, quota used up, timeout, odd reply) just means the
 original prompt is used unchanged - image generation is never blocked by this module.
 
@@ -22,9 +25,12 @@ Settings (all optional, environment variables):
   GEMINI_MODELS                            same variable beta_agent.py uses; first entries are tried in order
   GROQ_API_KEY / GROQ_MODEL                text-only fallback when Gemini is out of quota (it can't look at pictures)
   SERPER_API_KEY                           needed for the reference-picture search (already used by B.E.T.A.)
+  USE_REFERENCE_IMAGES = on (default) | off   hand reference pictures to FLUX.2 (needs Pillow to shrink them)
 """
 
 import base64
+import hashlib
+import io
 import json
 import os
 import re
@@ -43,6 +49,9 @@ CALL_TIMEOUT = 12        # seconds for any single model call
 TOTAL_BUDGET = 35        # seconds for the whole refine, then we give up and use the original prompt
 MAX_REFS = 3             # reference pictures to show the vision model
 MAX_CHARACTERS = 2
+MAX_FLUX2_REFS = 4       # FLUX.2 [dev] takes at most 4 reference pictures per image
+REF_MAX_PX = 480         # ...and each must be under 512x512
+IMG_CACHE_PREFIX = "char_img:"
 CACHE_KEY = "char_refs"
 CACHE_LIMIT = 150
 OVERRIDE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "characters.json")
@@ -295,7 +304,60 @@ def _describe_from_references(name, series, refs, api_key, env, deadline):
     return re.sub(r"\s+", " ", text)[:600]
 
 
-def traits_for(char, api_key, env, store, deadline):
+def _shrink_for_flux2(raw):
+    """JPEG bytes at most REF_MAX_PX on the long side (FLUX.2 wants references under 512x512). None without Pillow."""
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(raw)).convert("RGB")
+        im.thumbnail((REF_MAX_PX, REF_MAX_PX))
+        out = io.BytesIO()
+        im.save(out, "JPEG", quality=85, optimize=True)
+        return out.getvalue()
+    except Exception:
+        return None
+
+
+def _prepared_refs(char, env, store, memo=None):
+    """[(mime, bytes), ...] reference pictures for a character, already shrunk. Cached per character in the store
+    so the web search only happens the first time. Returns [] if nothing usable (no Serper key, no Pillow...)."""
+    name, series = char["name"], char.get("series", "")
+    key = _norm(name) + "|" + _norm(series)
+    if memo is not None and key in memo:
+        return memo[key]
+    out = []
+    ck = IMG_CACHE_PREFIX + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    if store is not None:
+        try:
+            entry = store.get(ck, None)
+            if isinstance(entry, dict):
+                for b64 in entry.get("imgs") or []:
+                    raw = base64.b64decode(b64)
+                    mime = image_search._sniff_mime(raw)
+                    if mime:
+                        out.append((mime, raw))
+        except Exception:
+            out = []
+    if not out:
+        try:
+            for _mime, raw in _fetch_references(name, series, env):
+                small = _shrink_for_flux2(raw)
+                if small:
+                    out.append(("image/jpeg", small))
+        except Exception as e:
+            _log("reference pictures unavailable for %s: %s" % (name, e))
+            out = []
+        if out and store is not None:
+            try:
+                store.set(ck, {"name": name, "ts": int(time.time()),
+                               "imgs": [base64.b64encode(r).decode("ascii") for _m, r in out]})
+            except Exception as e:
+                _log("couldn't cache reference pictures: %s" % e)
+    if memo is not None:
+        memo[key] = out
+    return out
+
+
+def traits_for(char, api_key, env, store, deadline, memo=None):
     name, series = char["name"], char.get("series", "")
     over = _override_for(name)
     if over:
@@ -306,7 +368,7 @@ def traits_for(char, api_key, env, store, deadline):
         if cached:
             return cached
     try:
-        refs = _fetch_references(name, series, env)
+        refs = _prepared_refs(char, env, store, memo)
     except Exception as e:
         _log("reference search failed for %s: %s" % (name, e))
         refs = []
@@ -355,9 +417,10 @@ def write_prompt(prompt, aspect, traits_by_name, api_key, env, deadline):
 # ---------------------------------------------------------------------------
 
 def refine_for_image(prompt, aspect, env, chat_key):
-    """Returns {'prompt': str, 'characters': [names], 'refined': bool}. Never raises; on any trouble the
-    original prompt comes back unchanged."""
-    result = {"prompt": prompt, "characters": [], "refined": False}
+    """Returns {'prompt': str, 'characters': [names], 'refined': bool, 'refs': [(mime, bytes)], 'ref_prompt': str}.
+    'prompt' is for text-only models (FLUX schnell); 'refs' + 'ref_prompt' are for FLUX.2 [dev], which can draw from
+    pictures. Never raises; on any trouble the original prompt comes back unchanged and refs is empty."""
+    result = {"prompt": prompt, "characters": [], "refined": False, "refs": [], "ref_prompt": prompt}
     if (env.get("PROMPT_REFINER") or "on").strip().lower() in ("off", "0", "false", "no"):
         return result
     original = (prompt or "").strip()
@@ -365,6 +428,7 @@ def refine_for_image(prompt, aspect, env, chat_key):
         return result
     deadline = time.time() + TOTAL_BUDGET
     store = _get_store()
+    memo = {}
 
     chars, traits_by_name = [], []
     try:
@@ -373,7 +437,7 @@ def refine_for_image(prompt, aspect, env, chat_key):
         _log("detect step failed: %s" % e)
     for c in chars:
         try:
-            t = traits_for(c, chat_key, env, store, deadline)
+            t = traits_for(c, chat_key, env, store, deadline, memo)
         except Exception as e:
             _log("look-up failed for %s: %s" % (c.get("name"), e))
             t = ""
@@ -387,5 +451,29 @@ def refine_for_image(prompt, aspect, env, chat_key):
     if better:
         result.update(prompt=better, refined=True)
     result["characters"] = [c["name"] for c in chars]
-    _log("characters=%s traits_found=%d refined=%s" % (result["characters"], len(traits_by_name), result["refined"]))
+
+    # reference pictures for FLUX.2 [dev] (at most 4 in total, split between the characters)
+    base = result["prompt"]
+    if chars and (env.get("USE_REFERENCE_IMAGES") or "on").strip().lower() not in ("off", "0", "false", "no"):
+        per = max(1, min(3, MAX_FLUX2_REFS // len(chars)))
+        refs, notes = [], []
+        for c in chars:
+            try:
+                got = _prepared_refs(c, env, store, memo)[:per]
+            except Exception as e:
+                _log("reference pictures failed for %s: %s" % (c.get("name"), e))
+                got = []
+            if got:
+                first, last = len(refs), len(refs) + len(got) - 1
+                where = "image %d" % first if first == last else "images %d to %d" % (first, last)
+                notes.append("%s show%s %s" % (where.capitalize(), "s" if first == last else "", c["name"]))
+                refs += got
+        if refs:
+            result["refs"] = refs[:MAX_FLUX2_REFS]
+            result["ref_prompt"] = (base + " Reference pictures: " + "; ".join(notes) +
+                                    " - keep each character's face, hair, outfit and colours exactly as in those pictures.")[:1900]
+    if not result["refs"]:
+        result["ref_prompt"] = base
+    _log("characters=%s traits_found=%d refined=%s refs=%d" % (result["characters"], len(traits_by_name),
+                                                                result["refined"], len(result["refs"])))
     return result
