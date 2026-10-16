@@ -12,6 +12,10 @@ Two providers (see generate_any):
     does not use your prompts or pictures to train models or to improve its services, and does not share them with
     other customers. (FLUX.1 schnell is open-source, made by Black Forest Labs.)
 
+Prompt refiner: before a Cloudflare picture is drawn, prompt_refiner.py works out which fictional characters the
+request names, finds a written description of how they look (characters.json, the saved cache, or by having Gemini
+look at a few reference pictures) and rewrites the request as a detailed paragraph. See that file for the settings.
+
 IMPORTANT - Google's free tier: as of October 2026 Google's pricing page lists the Gemini image models as NOT available
 on the free API tier (the free allowance is 0), so with a plain free AI Studio key Google answers
 "quota exceeded, limit: 0". This module turns that into a plain-language message. Options: enable billing on the
@@ -245,16 +249,35 @@ def provider_order(env, chat_key):
 
 
 def generate_any(prompt, aspect, env, chat_key):
-    """Try the providers in order. Returns (images, label, usage_key). Raises ImageGenError listing what went wrong."""
+    """Try the providers in order. Returns (images, label, usage_key). Raises ImageGenError listing what went wrong.
+
+    For Cloudflare (FLUX schnell, which doesn't really know characters) the prompt first goes through
+    prompt_refiner: detect named characters -> look up how they look -> rewrite as a detailed description.
+    If the refiner has any trouble it hands back the original prompt, so this never blocks a picture.
+    """
     problems = []
-    for name in provider_order(env, chat_key):
+    order = provider_order(env, chat_key)
+    refined = {"prompt": prompt, "characters": [], "refined": False}
+    if "cloudflare" in order:
+        try:
+            import prompt_refiner
+            refined = prompt_refiner.refine_for_image(prompt, aspect, env, chat_key)
+        except Exception as e:
+            print("[B.E.T.A.] prompt refiner unavailable, using the original prompt: %s" % e)
+    for name in order:
         try:
             if name == "cloudflare":
-                imgs = generate_cloudflare(env["CLOUDFLARE_ACCOUNT_ID"].strip(), env["CLOUDFLARE_API_TOKEN"].strip(), prompt, aspect=aspect)
+                # characters get a few more steps (more detail) - costs more of the daily free allowance
+                try:
+                    steps = int(env.get("CF_IMAGE_STEPS") or (6 if refined["characters"] else 4))
+                except ValueError:
+                    steps = 4
+                imgs = generate_cloudflare(env["CLOUDFLARE_ACCOUNT_ID"].strip(), env["CLOUDFLARE_API_TOKEN"].strip(),
+                                           refined["prompt"], aspect=aspect, steps=steps)
                 return imgs, CF_LABEL, "cloudflare-flux-1-schnell"
             model = env.get("GEMINI_IMAGE_MODEL") or DEFAULT_MODEL
             key = env.get("GEMINI_IMAGE_API_KEY") or chat_key
-            imgs = generate(key, prompt, model=model, aspect=aspect)
+            imgs = generate(key, prompt, model=model, aspect=aspect)    # Gemini understands characters itself
             return imgs, GOOGLE_LABEL, model
         except ImageGenError as e:
             problems.append(("Google" if name == "google" else "Cloudflare") + ": " + e.user_message)

@@ -1,0 +1,4 @@
+{
+  "_help": "Optional hand-written looks. Key = character name (lowercase, partial match is fine). Value = traits in plain words. An entry here beats the automatic reference-picture lookup. Keys starting with _ are ignored.",
+  "itachi uchiha": "Itachi Uchiha from Naruto: long black hair tied back in a low ponytail with two long bangs framing his face, deep tear-trough lines running from the inner corners of his eyes down his cheeks, red Sharingan eyes with black tomoe, a Hidden Leaf forehead protector with a horizontal scratch through the symbol, a black high-collared Akatsuki cloak patterned with red clouds outlined in white, calm stoic expression, pale skin."
+}
