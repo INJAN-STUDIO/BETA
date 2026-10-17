@@ -27,6 +27,8 @@ import shutil
 import tempfile
 import threading
 import time
+import urllib.parse
+import urllib.request
 import uuid
 
 from flask import Flask, Response, jsonify, request, send_from_directory
@@ -49,7 +51,7 @@ app.config["MAX_CONTENT_LENGTH"] = 14 * 1024 * 1024
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -277,9 +279,58 @@ def _send_push(title, body):
             storage.get_store().set(PUSH_KEY, [s for s in _load_subs() if s.get("endpoint") not in dead])
 
 
+# ntfy: a push channel that needs no Google services. The ntfy app (F-Droid) on the phone listens to a private topic
+# and the server posts "your reply is ready" to it. Environment variables on Render:
+#   NTFY_TOPIC (required, a long random secret), NTFY_SERVER (default https://ntfy.sh), NTFY_TOKEN (only if the
+#   server needs a login), NTFY_CLICK_URL (what tapping opens; defaults to this site's own address)
+NTFY_PREF_KEY = "notify_prefs"
+
+
+def _ntfy_ready():
+    return bool(os.environ.get("NTFY_TOPIC", "").strip())
+
+
+def _ntfy_on():
+    prefs = storage.get_store().get(NTFY_PREF_KEY, None)
+    return not (isinstance(prefs, dict) and prefs.get("ntfy") is False)      # on unless you switched it off in the menu
+
+
+def _send_ntfy(title, body):
+    """Post one notification to the ntfy topic. Never raises."""
+    topic = os.environ.get("NTFY_TOPIC", "").strip()
+    if not topic:
+        return
+    server = (os.environ.get("NTFY_SERVER", "").strip() or "https://ntfy.sh").rstrip("/")
+    headers = {"Title": title, "Priority": "high", "Content-Type": "text/plain; charset=utf-8"}
+    click = os.environ.get("NTFY_CLICK_URL", "").strip() or os.environ.get("RENDER_EXTERNAL_URL", "").strip()
+    if click:
+        headers["Click"] = click
+    token = os.environ.get("NTFY_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    try:
+        req = urllib.request.Request(server + "/" + urllib.parse.quote(topic, safe=""), data=body.encode("utf-8"),
+                                     headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except Exception as e:
+        print("[B.E.T.A.] ntfy notification failed:", repr(e)[:200])
+
+
+def _any_channel():
+    return (_ntfy_ready() and _ntfy_on()) or (_vapid_ready() and bool(_load_subs()))
+
+
+def _send_all(title, body):
+    if _ntfy_ready() and _ntfy_on():
+        _send_ntfy(title, body)
+    if _vapid_ready() and _load_subs():
+        _send_push(title, body)
+
+
 def _notify_if_away(job):
     """Called when a reply finishes. Notifies only if you are not looking at the chat right now."""
-    if job.get("cancelled") or not _vapid_ready() or not _load_subs():
+    if job.get("cancelled") or not _any_channel():
         return
     away = job.get("hidden") or (time.time() - job.get("last_poll", 0) > PUSH_AWAY_S)
     if not away:
@@ -287,7 +338,7 @@ def _notify_if_away(job):
     last = next((e for e in reversed(job["events"]) if e.get("type") in ("reply", "error")), None)
     if not last:
         return
-    threading.Thread(target=_send_push, args=("B.E.T.A.", _push_body(last["type"], last.get("text"))), daemon=True).start()
+    threading.Thread(target=_send_all, args=("B.E.T.A.", _push_body(last["type"], last.get("text"))), daemon=True).start()
 
 
 def _save_attachments(files):
@@ -527,10 +578,26 @@ def push_unsubscribe():
 
 @app.route("/api/push/test", methods=["POST"])
 def push_test():
-    if not _vapid_ready():
-        return jsonify(error="Notification keys aren't set on the server yet."), 503
-    threading.Thread(target=_send_push, args=("B.E.T.A.", "Notifications are on."), daemon=True).start()
+    if not (_vapid_ready() or _ntfy_ready()):
+        return jsonify(error="Notifications aren't set up on the server yet."), 503
+    threading.Thread(target=_send_all, args=("B.E.T.A.", "Notifications are on."), daemon=True).start()
     return jsonify(ok=True)
+
+
+@app.route("/api/notify/info")
+def notify_info():
+    return jsonify(ntfy=_ntfy_ready(), ntfy_on=_ntfy_ready() and _ntfy_on(), webpush=_vapid_ready())
+
+
+@app.route("/api/notify/ntfy", methods=["POST"])
+def notify_ntfy():
+    if not _ntfy_ready():
+        return jsonify(error="ntfy isn't set up on the server (NTFY_TOPIC is missing)."), 503
+    on = bool((request.get_json(silent=True) or {}).get("on"))
+    storage.get_store().set(NTFY_PREF_KEY, {"ntfy": on})
+    if on:
+        threading.Thread(target=_send_ntfy, args=("B.E.T.A.", "Notifications are on."), daemon=True).start()
+    return jsonify(ok=True, on=on)
 
 
 @app.route("/api/cancel", methods=["POST"])

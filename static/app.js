@@ -1136,8 +1136,21 @@ const urlB64ToBytes = (s) => {
 async function getPushSub() {
   try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch (e) { return null; }
 }
+let notifyMode = 'webpush';          // 'ntfy' when the server is set up to send through the ntfy app
+let ntfyOn = false;
 async function refreshNotifyMenu() {
+  let info = null;
+  try { info = await api('/api/notify/info'); } catch (e) { /* offline: fall back to browser push */ }
+  if (info && info.ntfy) {
+    notifyMode = 'ntfy'; ntfyOn = !!info.ntfy_on;
+    $('m-notify').classList.remove('hidden');
+    setIcon($('m-notify-icon'), ntfyOn ? 'bell' : 'bell-off');
+    $('m-notify-text').textContent = 'Notify me when a reply is ready (ntfy): ' + (ntfyOn ? 'on' : 'off');
+    return;
+  }
+  notifyMode = 'webpush';
   if (!pushSupported) { $('m-notify').classList.add('hidden'); return; }
+  $('m-notify').classList.remove('hidden');
   const on = Notification.permission === 'granted' && !!(await getPushSub());
   setIcon($('m-notify-icon'), on ? 'bell' : 'bell-off');
   $('m-notify-text').textContent = 'Notify me when a reply is ready: ' + (on ? 'on' : 'off');
@@ -1165,6 +1178,14 @@ async function syncPushSub() {
   if (sub) api('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } }).catch(() => {});
 }
 $('m-notify').addEventListener('click', async () => {
+  if (notifyMode === 'ntfy') {                 // the server sends through the ntfy app; this just switches it on or off
+    try {
+      await api('/api/notify/ntfy', { method: 'POST', body: { on: !ntfyOn } });
+      toast(!ntfyOn ? 'Notifications on - they arrive in the ntfy app' : 'Notifications off');
+    } catch (e) { toast(e.message || 'Could not change notifications.', true); }
+    refreshNotifyMenu();
+    return;
+  }
   let perm = Notification.permission;
   if (perm === 'default') { try { perm = await Notification.requestPermission(); } catch (e) { /* ignore */ } }   // must come straight from the tap
   try {
@@ -1172,7 +1193,12 @@ $('m-notify').addEventListener('click', async () => {
     if (sub) await disablePush(sub);
     else if (perm === 'granted') await enablePush();
     else toast('Notifications are blocked for B.E.T.A. - allow them in Firefox: tap the lock icon in the address bar > Permissions.', true);
-  } catch (e) { toast(e.message || 'Could not change notifications.', true); }
+  } catch (e) {
+    const m = String((e && e.message) || e || '');
+    toast(/push (service|subscription)/i.test(m)
+      ? "This browser has no push service (common on Fennec). Use the ntfy option instead: set NTFY_TOPIC on the server."
+      : (m || 'Could not change notifications.'), true);
+  }
   refreshNotifyMenu();
 });
 
