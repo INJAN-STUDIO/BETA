@@ -466,16 +466,49 @@ def write_prompt(prompt, aspect, traits_by_name, api_key, env, deadline):
 # The one function image_gen.py calls
 # ---------------------------------------------------------------------------
 
-def refine_for_image(prompt, aspect, env, chat_key):
-    """Returns {'prompt': str, 'characters': [names], 'refined': bool, 'refs': [(mime, bytes)], 'ref_prompt': str}.
-    'prompt' is for text-only models (FLUX schnell); 'refs' + 'ref_prompt' are for FLUX.2 [dev], which can draw from
-    pictures. Never raises; on any trouble the original prompt comes back unchanged and refs is empty."""
-    result = {"prompt": prompt, "characters": [], "refined": False, "refs": [], "ref_prompt": prompt}
-    if (env.get("PROMPT_REFINER") or "on").strip().lower() in ("off", "0", "false", "no"):
+def _image_range(first, last):
+    return "image %d" % first if first == last else "images %d to %d" % (first, last)
+
+
+def _refs_enabled(env):
+    return (env.get("USE_REFERENCE_IMAGES") or "on").strip().lower() not in ("off", "0", "false", "no")
+
+
+def _finish_refs(result, base, refs, notes, user_involved):
+    """Fill in result['refs'] / result['ref_prompt'] from the collected pictures and their one-line descriptions."""
+    refs = refs[:MAX_FLUX2_REFS]
+    if not refs:
+        result["refs"], result["ref_prompt"] = [], base
         return result
+    if user_involved:
+        tail = " - stay faithful to what those pictures show (faces, hair, outfits, shapes, colours) except where the request asks for a change."
+    else:
+        tail = " - keep each character's face, hair, outfit and colours exactly as in those pictures."
+    result["refs"] = refs
+    result["ref_prompt"] = (base + " Reference pictures: " + "; ".join(notes) + tail)[:1900]
+    return result
+
+
+def _user_note(n):
+    return "%s %s the reference %s the user supplied" % (_image_range(0, n - 1).capitalize(), "is" if n == 1 else "are",
+                                                      "picture" if n == 1 else "pictures")
+
+
+def refine_for_image(prompt, aspect, env, chat_key, user_refs=None):
+    """Returns {'prompt': str, 'characters': [names], 'refined': bool, 'refs': [(mime, bytes)], 'ref_prompt': str}.
+    'prompt' is for text-only models (FLUX schnell); 'refs' + 'ref_prompt' are for FLUX.2, which can draw from
+    pictures. 'user_refs' are pictures the user attached to the chat message: they always come first, and searched
+    character pictures fill whatever slots are left (4 in total). Never raises; on any trouble the original prompt
+    comes back unchanged."""
+    result = {"prompt": prompt, "characters": [], "refined": False, "refs": [], "ref_prompt": prompt}
+    use_refs = _refs_enabled(env)
+    mine = list(user_refs or [])[:MAX_FLUX2_REFS] if use_refs else []
+    my_notes = [_user_note(len(mine))] if mine else []
+    if (env.get("PROMPT_REFINER") or "on").strip().lower() in ("off", "0", "false", "no"):
+        return _finish_refs(result, prompt, list(mine), list(my_notes), True) if mine else result
     original = (prompt or "").strip()
     if not original or not (chat_key or env.get("GROQ_API_KEY")):
-        return result
+        return _finish_refs(result, prompt, list(mine), list(my_notes), True) if mine else result
     deadline = time.time() + TOTAL_BUDGET
     store = _get_store()
     memo = {}
@@ -502,15 +535,18 @@ def refine_for_image(prompt, aspect, env, chat_key):
         result.update(prompt=better, refined=True)
     result["characters"] = [c["name"] for c in chars]
 
-    # reference pictures for FLUX.2 [dev] (at most 4 in total, split between the characters)
-    base = result["prompt"]
-    if chars and (env.get("USE_REFERENCE_IMAGES") or "on").strip().lower() not in ("off", "0", "false", "no"):
-        per = max(1, min(3, MAX_FLUX2_REFS // len(chars)))
-        refs, notes = [], []
+    # reference pictures for FLUX.2 (at most 4 in total): the user's own first, then searched ones for named characters
+    refs, notes = list(mine), list(my_notes)
+    slots = MAX_FLUX2_REFS - len(refs)
+    if chars and use_refs and slots > 0:
+        per = max(1, min(3, slots // len(chars)))
         for c in chars:
+            room = MAX_FLUX2_REFS - len(refs)
+            if room <= 0:
+                break
             try:
                 allrefs = _prepared_refs(c, env, store, memo)
-                got = [r for r in allrefs if min(_img_size(r[1])) >= MIN_REF_PX][:per]
+                got = [r for r in allrefs if min(_img_size(r[1])) >= MIN_REF_PX][:min(per, room)]
                 if allrefs and not got:
                     _log("reference pictures for %s are too small for FLUX.2 (sizes %s, need at least %dpx) - "
                          "using the text-only model" % (c.get("name"), [_img_size(r[1]) for r in allrefs], MIN_REF_PX))
@@ -519,15 +555,9 @@ def refine_for_image(prompt, aspect, env, chat_key):
                 got = []
             if got:
                 first, last = len(refs), len(refs) + len(got) - 1
-                where = "image %d" % first if first == last else "images %d to %d" % (first, last)
-                notes.append("%s show%s %s" % (where.capitalize(), "s" if first == last else "", c["name"]))
+                notes.append("%s show%s %s" % (_image_range(first, last).capitalize(), "s" if first == last else "", c["name"]))
                 refs += got
-        if refs:
-            result["refs"] = refs[:MAX_FLUX2_REFS]
-            result["ref_prompt"] = (base + " Reference pictures: " + "; ".join(notes) +
-                                    " - keep each character's face, hair, outfit and colours exactly as in those pictures.")[:1900]
-    if not result["refs"]:
-        result["ref_prompt"] = base
-    _log("characters=%s traits_found=%d refined=%s refs=%d" % (result["characters"], len(traits_by_name),
-                                                                result["refined"], len(result["refs"])))
+    _finish_refs(result, result["prompt"], refs, notes, bool(mine))
+    _log("characters=%s traits_found=%d refined=%s refs=%d (your pictures: %d)" % (
+        result["characters"], len(traits_by_name), result["refined"], len(result["refs"]), len(mine)))
     return result

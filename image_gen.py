@@ -12,6 +12,9 @@ Two providers (see generate_any):
     does not use your prompts or pictures to train models or to improve its services, and does not share them with
     other customers. (FLUX.1 schnell is open-source, made by Black Forest Labs.)
 
+Your own pictures: pictures attached to a chat message are kept (app.py calls set_user_refs) and sent to FLUX.2 first,
+ahead of any searched pictures, up to 4 in total.
+
 Reference pictures: when a request names a character, prompt_refiner also hands back 2-3 small reference pictures and
 generate_any() sends them to FLUX.2 [klein 4B] on Cloudflare (it can draw from up to 4 pictures). On any failure it falls back
 to FLUX.1 schnell with the refined text prompt. Switch off with USE_REFERENCE_IMAGES=off. Needs Pillow.
@@ -340,6 +343,69 @@ def generate_cloudflare_flux2(account_id, token, prompt, refs, aspect="1:1", ste
 
 
 # ---------------------------------------------------------------------------
+# Pictures the user attached to the current chat message (used as references)
+# ---------------------------------------------------------------------------
+# app.py calls set_user_refs() before a reply is worked on and clear_user_refs() afterwards. Only one reply is ever
+# being worked on at a time, so a single shared slot is enough. Pictures are shrunk to under 512px (FLUX.2's limit).
+
+USER_REF_MAX = 4
+USER_REF_MIN_PX = 64          # Cloudflare rejects anything smaller
+USER_REF_MAX_PX = 480
+_user_refs = []
+_user_refs_lock = threading.Lock()
+
+
+def _shrink_reference(raw):
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(raw))
+        try:
+            im.draft("RGB", (USER_REF_MAX_PX * 2, USER_REF_MAX_PX * 2))
+        except Exception:
+            pass
+        im.thumbnail((USER_REF_MAX_PX, USER_REF_MAX_PX))
+        im = im.convert("RGB")
+        if min(im.size) < USER_REF_MIN_PX:
+            return None
+        out = io.BytesIO()
+        im.save(out, "JPEG", quality=88, optimize=True)
+        return out.getvalue()
+    except Exception:
+        return None
+
+
+def set_user_refs(paths):
+    """Remember the pictures (file paths) attached to this message. Non-pictures and unreadable files are skipped."""
+    refs = []
+    for path in paths or []:
+        if not str(path).lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+            continue
+        try:
+            with open(path, "rb") as f:
+                raw = f.read(MAX_IMAGE_BYTES + 1)
+        except Exception:
+            continue
+        small = _shrink_reference(raw) if 0 < len(raw) <= MAX_IMAGE_BYTES else None
+        if small:
+            refs.append(("image/jpeg", small))
+        if len(refs) >= USER_REF_MAX:
+            break
+    with _user_refs_lock:
+        _user_refs[:] = refs
+    return len(refs)
+
+
+def clear_user_refs():
+    with _user_refs_lock:
+        _user_refs[:] = []
+
+
+def get_user_refs():
+    with _user_refs_lock:
+        return list(_user_refs)
+
+
+# ---------------------------------------------------------------------------
 # Choosing a provider
 # ---------------------------------------------------------------------------
 
@@ -367,23 +433,30 @@ def generate_any(prompt, aspect, env, chat_key):
 
     For Cloudflare (FLUX schnell, which doesn't really know characters) the prompt first goes through
     prompt_refiner: detect named characters -> look up how they look -> rewrite as a detailed description.
-    If the refiner has any trouble it hands back the original prompt, so this never blocks a picture.
+    Pictures the user attached to the message (and searched pictures of named characters) go to FLUX.2, which can
+    draw from them. If the refiner or FLUX.2 has any trouble we carry on with plain text, so a picture still comes out.
     """
     problems = []
     order = provider_order(env, chat_key)
+    use_refs = (env.get("USE_REFERENCE_IMAGES") or "on").strip().lower() not in ("off", "0", "false", "no")
+    user_refs = get_user_refs() if use_refs else []
     refined = {"prompt": prompt, "characters": [], "refined": False, "refs": [], "ref_prompt": prompt}
     if "cloudflare" in order:
         try:
             import prompt_refiner
-            refined = prompt_refiner.refine_for_image(prompt, aspect, env, chat_key)
+            refined = prompt_refiner.refine_for_image(prompt, aspect, env, chat_key, user_refs=user_refs)
         except Exception as e:
             print("[B.E.T.A.] prompt refiner unavailable, using the original prompt: %s" % e)
+        if user_refs and not refined.get("refs"):          # refiner failed: the user's pictures must not be lost
+            refined["refs"] = list(user_refs)[:USER_REF_MAX]
+            refined["ref_prompt"] = (refined["prompt"] + " Use the attached reference picture(s) as the visual reference - "
+                                     "stay faithful to what they show except where the request asks for a change.")[:1900]
     for name in order:
         try:
             if name == "cloudflare":
-                # 1) a named character with reference pictures -> FLUX.2 (klein 4B), which can draw from pictures.
+                # 1) reference pictures (yours and/or a named character's) -> FLUX.2, which can draw from pictures.
                 #    If it fails for any reason (quota, error), quietly carry on with schnell below.
-                if refined.get("refs") and (env.get("USE_REFERENCE_IMAGES") or "on").strip().lower() not in ("off", "0", "false", "no"):
+                if refined.get("refs") and use_refs:
                     try:
                         steps2 = int(env.get("CF_REF_STEPS") or 20)           # only used by flux-2-dev
                     except ValueError:
@@ -403,7 +476,8 @@ def generate_any(prompt, aspect, env, chat_key):
                     steps = 4
                 imgs = generate_cloudflare(env["CLOUDFLARE_ACCOUNT_ID"].strip(), env["CLOUDFLARE_API_TOKEN"].strip(),
                                            refined["prompt"], aspect=aspect, steps=steps)
-                return imgs, CF_LABEL, "cloudflare-flux-1-schnell"
+                label = CF_LABEL + (" (your reference picture couldn't be used this time)" if user_refs else "")
+                return imgs, label, "cloudflare-flux-1-schnell"
             model = env.get("GEMINI_IMAGE_MODEL") or DEFAULT_MODEL
             key = env.get("GEMINI_IMAGE_API_KEY") or chat_key
             imgs = generate(key, prompt, model=model, aspect=aspect)    # Gemini understands characters itself

@@ -49,7 +49,7 @@ app.config["MAX_CONTENT_LENGTH"] = 14 * 1024 * 1024
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "2.0"
+APP_VERSION = "2.1"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -190,6 +190,7 @@ def _run_job(job, text, saved_paths, tmpdir):
             if not job["cancelled"]:
                 job["events"].append({"type": "images", "payload": payload})
 
+        image_gen.set_user_refs(saved_paths)      # pictures attached to this message become references for generate_image
         reply = agent.send(text, image_paths=saved_paths or None, on_tool_result=on_tool, on_images=on_images)
         if not job["cancelled"]:
             job["events"].append({"type": "reply", "text": reply or ""})
@@ -200,6 +201,7 @@ def _run_job(job, text, saved_paths, tmpdir):
     finally:
         job["done"] = True
         CURRENT_JOB = None
+        image_gen.clear_user_refs()
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
         try:
