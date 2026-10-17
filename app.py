@@ -35,6 +35,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 import image_gen
 import image_search
+import storage
 import tts_edge
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -44,9 +45,11 @@ app = Flask(__name__, static_folder=None)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)   # Render sits behind a proxy: real client IP + https
 app.config["MAX_CONTENT_LENGTH"] = 14 * 1024 * 1024
 
-# Bumped on every release. The page, the service worker and the server all carry it, so a phone can tell
-# when it is showing an old copy and refresh itself (see app.js "CLIENT_VERSION").
-APP_VERSION = "2026.10.14-2"
+# THE release number - the only place you change it. Use plain numbers: 1.1 for a small fix or tweak, 2.0 for a
+# big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
+# for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
+# the menu all pick it up from here, and a phone showing an older number refreshes itself.
+APP_VERSION = "2.0"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -152,7 +155,8 @@ def _new_job():
     with _jobs_lock:
         for jid in [j for j, v in JOBS.items() if now - v["created"] > 900]:
             JOBS.pop(jid, None)
-        job = {"id": uuid.uuid4().hex[:16], "events": [], "done": False, "cancelled": False, "created": now}
+        job = {"id": uuid.uuid4().hex[:16], "events": [], "done": False, "cancelled": False, "created": now,
+               "last_poll": now, "hidden": False}
         JOBS[job["id"]] = job
         return job
 
@@ -198,6 +202,90 @@ def _run_job(job, text, saved_paths, tmpdir):
         CURRENT_JOB = None
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
+        try:
+            _notify_if_away(job)
+        except Exception as e:
+            print("[B.E.T.A.] notification step failed:", repr(e))
+
+
+# ---------------------------------------------------------------------------
+# Notifications (Web Push): "your reply is ready" when you have left the chat
+# ---------------------------------------------------------------------------
+# Needs two environment variables on Render, made once with make_vapid_keys.py:
+#   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY      (optional: VAPID_SUBJECT, PUSH_PREVIEW=on to show the start of the reply)
+# Phones that turned notifications on are saved in the store (Supabase) so they survive restarts.
+
+PUSH_KEY = "push_subs"
+MAX_PUSH_SUBS = 5
+PUSH_AWAY_S = 8          # no chat poll for this long = you have left the app
+_push_lock = threading.Lock()
+
+
+def _vapid_ready():
+    return bool(os.environ.get("VAPID_PUBLIC_KEY", "").strip() and os.environ.get("VAPID_PRIVATE_KEY", "").strip())
+
+
+def _load_subs():
+    subs = storage.get_store().get(PUSH_KEY, None)
+    return [s for s in subs if isinstance(s, dict)] if isinstance(subs, list) else []
+
+
+def _push_body(kind, text):
+    if kind == "error":
+        return "Something went wrong - open B.E.T.A. to see."
+    if os.environ.get("PUSH_PREVIEW", "").strip().lower() in ("on", "1", "yes", "true"):
+        plain = re.sub(r"[*_`#>\[\]]+", "", str(text or ""))
+        plain = re.sub(r"\s+", " ", plain).strip()
+        if plain:
+            return plain[:90] + ("..." if len(plain) > 90 else "")
+    return "Your reply is ready."
+
+
+def _send_push(title, body):
+    """Send one notification to every saved phone. Runs in a background thread; never raises."""
+    try:
+        from pywebpush import webpush, WebPushException
+    except Exception:
+        print("[B.E.T.A.] pywebpush isn't installed - no notification sent (add it to requirements.txt).")
+        return
+    priv = os.environ.get("VAPID_PRIVATE_KEY", "").strip()
+    subject = os.environ.get("VAPID_SUBJECT", "").strip() or os.environ.get("RENDER_EXTERNAL_URL", "").strip() \
+        or "mailto:beta@example.com"
+    try:
+        from py_vapid import Vapid
+        vapid = Vapid.from_raw(priv)
+    except Exception as e:
+        print("[B.E.T.A.] couldn't read VAPID_PRIVATE_KEY:", repr(e))
+        return
+    payload = json.dumps({"title": title, "body": body})
+    dead = []
+    for sub in _load_subs():
+        try:
+            webpush(subscription_info=sub, data=payload, vapid_private_key=vapid,
+                    vapid_claims={"sub": subject}, ttl=3600, headers={"Urgency": "high"})
+        except WebPushException as e:
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            print("[B.E.T.A.] push failed (HTTP %s): %s" % (code, str(e)[:160]))
+            if code in (404, 410):                       # that phone unsubscribed or reset the browser
+                dead.append(sub.get("endpoint"))
+        except Exception as e:
+            print("[B.E.T.A.] push failed:", repr(e)[:200])
+    if dead:
+        with _push_lock:
+            storage.get_store().set(PUSH_KEY, [s for s in _load_subs() if s.get("endpoint") not in dead])
+
+
+def _notify_if_away(job):
+    """Called when a reply finishes. Notifies only if you are not looking at the chat right now."""
+    if job.get("cancelled") or not _vapid_ready() or not _load_subs():
+        return
+    away = job.get("hidden") or (time.time() - job.get("last_poll", 0) > PUSH_AWAY_S)
+    if not away:
+        return
+    last = next((e for e in reversed(job["events"]) if e.get("type") in ("reply", "error")), None)
+    if not last:
+        return
+    threading.Thread(target=_send_push, args=("B.E.T.A.", _push_body(last["type"], last.get("text"))), daemon=True).start()
 
 
 def _save_attachments(files):
@@ -397,10 +485,50 @@ def poll():
         after = max(0, int(request.args.get("after", "0")))
     except ValueError:
         after = 0
+    job["last_poll"] = time.time()                       # lets the server tell whether you are still looking at the chat
+    job["hidden"] = request.args.get("h") == "1"         # ...or whether the page is open but in the background
     events = job["events"][after:]
     agent = AGENT
     return jsonify(events=events, next=after + len(events), done=job["done"] and not events,
                    usage=_usage(agent) if agent else None)
+
+
+@app.route("/api/push/key")
+def push_key():
+    return jsonify(key=os.environ.get("VAPID_PUBLIC_KEY", "").strip() if _vapid_ready() else None)
+
+
+@app.route("/api/push/subscribe", methods=["POST"])
+def push_subscribe():
+    sub = (request.get_json(silent=True) or {}).get("subscription") or {}
+    endpoint = str(sub.get("endpoint", ""))
+    keys = sub.get("keys") or {}
+    p256dh, auth = str(keys.get("p256dh", "")), str(keys.get("auth", ""))
+    if not (endpoint.startswith("https://") and len(endpoint) < 700 and 0 < len(p256dh) < 200 and 0 < len(auth) < 100):
+        return jsonify(error="That notification address doesn't look right."), 400
+    if not image_search.is_public_url(endpoint):         # the server will contact this address - public hosts only
+        return jsonify(error="That notification address isn't allowed."), 400
+    with _push_lock:
+        subs = [s for s in _load_subs() if s.get("endpoint") != endpoint]
+        subs.append({"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth}})
+        storage.get_store().set(PUSH_KEY, subs[-MAX_PUSH_SUBS:])
+    return jsonify(ok=True)
+
+
+@app.route("/api/push/unsubscribe", methods=["POST"])
+def push_unsubscribe():
+    endpoint = str((request.get_json(silent=True) or {}).get("endpoint", ""))
+    with _push_lock:
+        storage.get_store().set(PUSH_KEY, [s for s in _load_subs() if s.get("endpoint") != endpoint])
+    return jsonify(ok=True)
+
+
+@app.route("/api/push/test", methods=["POST"])
+def push_test():
+    if not _vapid_ready():
+        return jsonify(error="Notification keys aren't set on the server yet."), 503
+    threading.Thread(target=_send_push, args=("B.E.T.A.", "Notifications are on."), daemon=True).start()
+    return jsonify(ok=True)
 
 
 @app.route("/api/cancel", methods=["POST"])

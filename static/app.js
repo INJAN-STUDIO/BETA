@@ -3,9 +3,12 @@
 
 const $ = (id) => document.getElementById(id);
 
-// Must match APP_VERSION in app.py. If the server reports a different one, this copy of the app is out of date and
-// refreshes itself (see waitForServer).
-const CLIENT_VERSION = '2026.10.14-2';
+// The release number comes from this script's own address (?v=2.0, filled in by the server from APP_VERSION in app.py),
+// so there is nothing to keep in step by hand. If the server reports a different one, this copy of the app is out of
+// date and refreshes itself (see waitForServer).
+const CLIENT_VERSION = (() => {
+  try { return new URL(document.currentScript.src).searchParams.get('v') || '0'; } catch (e) { return '0'; }
+})();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------------------
@@ -36,6 +39,8 @@ const ICONS = {
   loader: '<path d="M21 12a9 9 0 11-6.2-8.56"/>',
   'play-fill': '<path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/>',
   'arrow-down': '<path d="M12 5v14M19 12l-7 7-7-7"/>',
+  bell: '<path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>',
+  'bell-off': '<path d="M13.73 21a2 2 0 01-3.46 0M18.63 13A17.9 17.9 0 0118 8M6.26 6.26A5.86 5.86 0 006 8c0 7-3 9-3 9h14M18 8a6 6 0 00-9.33-5M1 1l22 22"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/>',
 };
 const iconSvg = (name) =>
@@ -989,7 +994,7 @@ async function pollJob(job) {
     if (stoppedJob === job) return;
     let p;
     try {
-      p = await api(`/api/poll?job=${job}&after=${after}`);
+      p = await api(`/api/poll?job=${job}&after=${after}&h=${document.hidden ? 1 : 0}`);
     } catch (err) {
       if (err.status === 404 || err.status === 401) return;    // job gone (server restarted) or logged out
       await sleep(2000); continue;                              // flaky connection - just try again
@@ -1018,7 +1023,7 @@ $('send-btn').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 const show = (id) => $(id).classList.remove('hidden');
 const hide = (id) => $(id).classList.add('hidden');
-$('menu-btn').addEventListener('click', () => { refreshVoiceMenu(); show('menu'); });
+$('menu-btn').addEventListener('click', () => { refreshVoiceMenu(); refreshNotifyMenu(); show('menu'); });
 $('menu-close').addEventListener('click', () => hide('menu'));
 $('menu').addEventListener('click', (e) => { if (e.target === $('menu')) hide('menu'); });
 $('memory').addEventListener('click', (e) => { if (e.target === $('memory')) hide('memory'); });
@@ -1120,6 +1125,55 @@ $('m-voice').addEventListener('click', () => {
   voiceOn = !voiceOn; store.set('beta_voice', voiceOn ? '1' : '0');
   if (!voiceOn) stopSpeaking();
   refreshVoiceMenu();
+});
+
+// ---- notifications: "your reply is ready", even after you have left the app (Web Push) ----
+const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const urlB64ToBytes = (s) => {
+  const raw = atob((s + '='.repeat((4 - (s.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+};
+async function getPushSub() {
+  try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch (e) { return null; }
+}
+async function refreshNotifyMenu() {
+  if (!pushSupported) { $('m-notify').classList.add('hidden'); return; }
+  const on = Notification.permission === 'granted' && !!(await getPushSub());
+  setIcon($('m-notify-icon'), on ? 'bell' : 'bell-off');
+  $('m-notify-text').textContent = 'Notify me when a reply is ready: ' + (on ? 'on' : 'off');
+}
+async function enablePush() {
+  const { key } = await api('/api/push/key');
+  if (!key) throw new Error('The server has no notification keys yet (VAPID keys missing on Render).');
+  const reg = await navigator.serviceWorker.ready;
+  const old = await reg.pushManager.getSubscription();
+  if (old) { try { await old.unsubscribe(); } catch (e) { /* start clean in case the server key changed */ } }
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToBytes(key) });
+  await api('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+  api('/api/push/test', { method: 'POST', body: {} }).catch(() => {});    // a test notification, so you can see it works
+  toast('Notifications on');
+}
+async function disablePush(sub) {
+  try { await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }); } catch (e) { /* ignore */ }
+  try { await sub.unsubscribe(); } catch (e) { /* ignore */ }
+  toast('Notifications off');
+}
+// Opened the app with notifications already on: make sure the server still has this phone saved.
+async function syncPushSub() {
+  if (!pushSupported || Notification.permission !== 'granted') return;
+  const sub = await getPushSub();
+  if (sub) api('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } }).catch(() => {});
+}
+$('m-notify').addEventListener('click', async () => {
+  let perm = Notification.permission;
+  if (perm === 'default') { try { perm = await Notification.requestPermission(); } catch (e) { /* ignore */ } }   // must come straight from the tap
+  try {
+    const sub = await getPushSub();
+    if (sub) await disablePush(sub);
+    else if (perm === 'granted') await enablePush();
+    else toast('Notifications are blocked for B.E.T.A. - allow them in Firefox: tap the lock icon in the address bar > Permissions.', true);
+  } catch (e) { toast(e.message || 'Could not change notifications.', true); }
+  refreshNotifyMenu();
 });
 
 $('m-clear').addEventListener('click', async () => {
@@ -1240,6 +1294,7 @@ async function startApp(fromId) {
   st.history.forEach((m) => addMessage(m.role === 'user' ? 'user' : 'ai', m.text));
   updateUsage(st.usage);
   scrollDown(true);
+  syncPushSub();
   if (st.active_job) {            // a reply was still being worked on when the page reloaded
     currentJob = st.active_job;
     setBusy(true);

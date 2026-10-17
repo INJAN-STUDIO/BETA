@@ -59,3 +59,24 @@ self.addEventListener('fetch', function (e) {
     });
   }));
 });
+
+// ---- notifications ("your reply is ready") ----
+// The server sends a small push message when a reply finishes while you are away; this shows it. Tapping it
+// brings B.E.T.A. back to the front (or opens it).
+self.addEventListener('push', function (e) {
+  var data = {};
+  try { data = e.data ? e.data.json() : {}; } catch (err) { /* plain text or empty - use the defaults */ }
+  e.waitUntil(self.registration.showNotification(data.title || 'B.E.T.A.', {
+    body: data.body || 'Your reply is ready.',
+    icon: '/static/icon-192.png',
+    tag: 'beta-reply'                                  // a newer notification replaces an older one instead of piling up
+  }));
+});
+
+self.addEventListener('notificationclick', function (e) {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+    for (var i = 0; i < list.length; i++) { if ('focus' in list[i]) return list[i].focus(); }
+    return self.clients.openWindow('/');
+  }));
+});
