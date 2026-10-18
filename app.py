@@ -36,8 +36,10 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import image_gen
+import file_store
 import image_search
 import storage
+import term_bridge
 import tts_edge
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -51,7 +53,7 @@ app.config["MAX_CONTENT_LENGTH"] = 14 * 1024 * 1024
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "2.2"
+APP_VERSION = "2.3"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -341,6 +343,18 @@ def _notify_if_away(job):
     threading.Thread(target=_send_all, args=("B.E.T.A.", _push_body(last["type"], last.get("text"))), daemon=True).start()
 
 
+def _notify_approval(command):
+    """A Termux command is waiting for your tap. If you've left the chat, say so with a notification."""
+    job = CURRENT_JOB
+    if not job or not _any_channel():
+        return
+    if job.get("hidden") or (time.time() - job.get("last_poll", 0) > PUSH_AWAY_S):
+        threading.Thread(target=_send_all, args=("B.E.T.A.", "A command needs your approval."), daemon=True).start()
+
+
+term_bridge.on_ask = _notify_approval
+
+
 def _save_attachments(files):
     """Validate and write uploaded files to a temp dir. Returns (paths, tmpdir)
     or raises ValueError with a message safe to show the user."""
@@ -403,6 +417,7 @@ def _security_headers(resp):
 
 
 PUBLIC_API = {"/api/health", "/api/login", "/api/me"}
+TOKEN_API = {"/api/term/next", "/api/term/result"}      # the Termux script: checked against TERM_TOKEN inside each route
 
 
 @app.before_request
@@ -411,7 +426,7 @@ def _gate():
         return None
     if request.method == "POST" and request.headers.get("X-Requested-With") != "beta":
         return jsonify(error="Bad request."), 403
-    if request.path in PUBLIC_API:
+    if request.path in PUBLIC_API or request.path in TOKEN_API:
         return None
     if not _password():
         return jsonify(error="Server is missing BETA_PASSWORD."), 503
@@ -605,6 +620,7 @@ def cancel():
     job = JOBS.get(str((request.get_json(silent=True) or {}).get("job", "")))
     if job:
         job["cancelled"] = True    # the model call itself can't be interrupted, but nothing more is shown
+    term_bridge.cancel_all()
     return jsonify(ok=True)
 
 
@@ -649,6 +665,67 @@ def tts():
     except tts_edge.TTSError as e:
         return jsonify(error=str(e)), 502
     return Response(audio, mimetype="audio/mpeg", headers={"Cache-Control": "no-store"})
+
+
+# ---------------------------------------------------------------------------
+# Files B.E.T.A. creates for you to download
+# ---------------------------------------------------------------------------
+
+@app.route("/api/file/<fid>")
+def file_download(fid):
+    item = file_store.get(fid)
+    if not item:
+        return jsonify(error="That file is no longer stored (only recent files are kept). Ask B.E.T.A. to make it again."), 404
+    name = item["name"]
+    headers = {
+        "Cache-Control": "private, max-age=600",
+        "Content-Disposition": 'attachment; filename="%s"; filename*=UTF-8\'\'%s' % (name, urllib.parse.quote(name)),
+    }
+    return Response(item["bytes"], mimetype=item["mime"], headers=headers)
+
+
+# ---------------------------------------------------------------------------
+# Termux bridge (see term_bridge.py). /api/term/next and /api/term/result are used by termux_agent.py and are
+# protected by TERM_TOKEN; the other two are used by the chat page and need a normal login.
+# ---------------------------------------------------------------------------
+
+def _term_authorised():
+    header = request.headers.get("Authorization", "")
+    ok = header.startswith("Bearer ") and term_bridge.check_token(header[7:].strip())
+    if not ok:
+        time.sleep(1)                                    # slows down anyone guessing
+    return ok
+
+
+@app.route("/api/term/status")
+def term_status():
+    return jsonify(enabled=term_bridge.enabled(), connected=term_bridge.connected())
+
+
+@app.route("/api/term/decide", methods=["POST"])
+def term_decide():
+    d = request.get_json(silent=True) or {}
+    if term_bridge.decide(str(d.get("id", "")), bool(d.get("approve"))):
+        return jsonify(ok=True)
+    return jsonify(error="That request has expired."), 410
+
+
+@app.route("/api/term/next")
+def term_next():
+    if not _term_authorised():
+        return jsonify(error="Bad token."), 401
+    return jsonify(term_bridge.next_for_termux())
+
+
+@app.route("/api/term/result", methods=["POST"])
+def term_result():
+    if not _term_authorised():
+        return jsonify(error="Bad token."), 401
+    d = request.get_json(silent=True) or {}
+    code = d.get("exit_code")
+    term_bridge.submit_result(str(d.get("id", "")), code if isinstance(code, int) else None,
+                              str(d.get("output", ""))[:20000], bool(d.get("timed_out")))
+    return jsonify(ok=True)
 
 
 @app.route("/api/generated/<gid>")

@@ -39,6 +39,8 @@ const ICONS = {
   loader: '<path d="M21 12a9 9 0 11-6.2-8.56"/>',
   'play-fill': '<path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/>',
   'arrow-down': '<path d="M12 5v14M19 12l-7 7-7-7"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+  file: '<path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/>',
   bell: '<path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>',
   'bell-off': '<path d="M13.73 21a2 2 0 01-3.46 0M18.63 13A17.9 17.9 0 0118 8M6.26 6.26A5.86 5.86 0 006 8c0 7-3 9-3 9h14M18 8a6 6 0 00-9.33-5M1 1l22 22"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/>',
@@ -977,6 +979,9 @@ function handleEvent(ev) {
     const p = ev.payload || {};
     if (p.kind === 'videos') addVideos(p);
     else if (p.kind === 'generated') addGenerated(p);
+    else if (p.kind === 'file') addFiles(p);
+    else if (p.kind === 'termux_ask') addTermuxAsk(p);
+    else if (p.kind === 'termux_result') addTermuxResult(p);
     else addGallery(p);
   }
   else if (ev.type === 'reply') {
@@ -991,7 +996,7 @@ function handleEvent(ev) {
 async function pollJob(job) {
   let after = 0;
   for (;;) {
-    if (stoppedJob === job) return;
+    if (stoppedJob === job || replacedByNewerTab) return;
     let p;
     try {
       p = await api(`/api/poll?job=${job}&after=${after}&h=${document.hidden ? 1 : 0}`);
@@ -1023,7 +1028,7 @@ $('send-btn').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 const show = (id) => $(id).classList.remove('hidden');
 const hide = (id) => $(id).classList.add('hidden');
-$('menu-btn').addEventListener('click', () => { refreshVoiceMenu(); refreshNotifyMenu(); show('menu'); });
+$('menu-btn').addEventListener('click', () => { refreshVoiceMenu(); refreshNotifyMenu(); refreshTermuxMenu(); show('menu'); });
 $('menu-close').addEventListener('click', () => hide('menu'));
 $('menu').addEventListener('click', (e) => { if (e.target === $('menu')) hide('menu'); });
 $('memory').addEventListener('click', (e) => { if (e.target === $('memory')) hide('memory'); });
@@ -1126,6 +1131,136 @@ $('m-voice').addEventListener('click', () => {
   if (!voiceOn) stopSpeaking();
   refreshVoiceMenu();
 });
+
+// ---------------------------------------------------------------------------
+// File download cards, Termux approval cards, and "only one live tab"
+// ---------------------------------------------------------------------------
+(function injectCardStyles() {
+  const st = document.createElement('style');
+  st.textContent = `
+    .msg.filecard, .msg.termcard { max-width: 94%; }
+    .cardtitle { font-weight: 600; margin-bottom: 6px; }
+    .fc-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-top: 6px; border-radius: 12px;
+              border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.10); }
+    .fc-row svg { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; }
+    .fc-name { font-weight: 600; word-break: break-all; }
+    .fc-size { opacity: .7; font-size: .85em; }
+    .fc-btn { padding: 9px 14px; border-radius: 10px; border: 1px solid rgba(127,127,127,.55); background: rgba(127,127,127,.18);
+              color: inherit; font: inherit; cursor: pointer; }
+    .fc-btn.primary { background: rgba(30,150,255,.28); border-color: rgba(30,150,255,.7); font-weight: 600; }
+    .fc-btn[disabled] { opacity: .45; }
+    .fc-grow { flex: 1; min-width: 0; }
+    .tc-cmd { font-family: ui-monospace, monospace; font-size: .88em; white-space: pre-wrap; word-break: break-all;
+              padding: 10px; border-radius: 10px; background: rgba(0,0,0,.4); margin: 8px 0; }
+    .tc-actions { display: flex; gap: 8px; }
+    .tc-status { opacity: .85; font-size: .9em; margin-top: 8px; }
+    .tc-out { font-family: ui-monospace, monospace; font-size: .82em; white-space: pre-wrap; word-break: break-all;
+              max-height: 40vh; overflow: auto; padding: 8px; margin-top: 6px; border-radius: 8px; background: rgba(0,0,0,.4); }
+  `;
+  document.head.appendChild(st);
+})();
+
+function fmtBytes(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+
+function addFiles(p) {
+  if (!p || !p.files || !p.files.length) return;
+  const card = document.createElement('div');
+  card.className = 'msg ai filecard';
+  const t = document.createElement('div'); t.className = 'cardtitle'; t.textContent = p.files.length > 1 ? 'Files ready to download' : 'File ready to download';
+  card.appendChild(t);
+  p.files.forEach((f) => {
+    const row = document.createElement('div'); row.className = 'fc-row';
+    const ic = document.createElement('span'); ic.innerHTML = iconSvg('file'); row.appendChild(ic);
+    const info = document.createElement('div'); info.className = 'fc-grow';
+    const nm = document.createElement('div'); nm.className = 'fc-name'; nm.textContent = f.name; info.appendChild(nm);
+    const sz = document.createElement('div'); sz.className = 'fc-size'; sz.textContent = fmtBytes(f.size || 0); info.appendChild(sz);
+    row.appendChild(info);
+    const btn = document.createElement('button'); btn.className = 'fc-btn primary'; btn.textContent = 'Download';
+    btn.addEventListener('click', () => { window.location.href = '/api/file/' + encodeURIComponent(f.id); });   // sent as an attachment: saves, doesn't navigate away
+    row.appendChild(btn);
+    card.appendChild(row);
+  });
+  const note = document.createElement('div'); note.className = 'tc-status'; note.textContent = 'Files are kept only for a short while - download it soon.';
+  card.appendChild(note);
+  addEl(card);
+}
+
+function addTermuxAsk(p) {
+  const card = document.createElement('div');
+  card.className = 'msg ai termcard';
+  card.dataset.termId = p.id;
+  const t = document.createElement('div'); t.className = 'cardtitle'; t.textContent = 'B.E.T.A. wants to run this in Termux';
+  card.appendChild(t);
+  if (p.explanation) { const why = document.createElement('div'); why.textContent = p.explanation; card.appendChild(why); }
+  const cmd = document.createElement('div'); cmd.className = 'tc-cmd'; cmd.textContent = p.command; card.appendChild(cmd);
+  const actions = document.createElement('div'); actions.className = 'tc-actions';
+  const run = document.createElement('button'); run.className = 'fc-btn primary'; run.textContent = 'Run';
+  const deny = document.createElement('button'); deny.className = 'fc-btn'; deny.textContent = 'Deny';
+  actions.appendChild(run); actions.appendChild(deny); card.appendChild(actions);
+  const status = document.createElement('div'); status.className = 'tc-status'; status.textContent = 'Nothing runs until you tap Run.'; card.appendChild(status);
+  const decide = async (approve) => {
+    run.disabled = deny.disabled = true;
+    try {
+      await api('/api/term/decide', { method: 'POST', body: { id: p.id, approve } });
+      status.textContent = approve ? 'Approved - waiting for Termux...' : 'Denied.';
+    } catch (e) {
+      status.textContent = e.status === 410 ? 'This request has expired.' : (e.message || "Couldn't send your answer.");
+    }
+  };
+  run.addEventListener('click', () => decide(true));
+  deny.addEventListener('click', () => decide(false));
+  addEl(card);
+}
+
+function addTermuxResult(p) {
+  const card = document.querySelector('[data-term-id="' + p.id + '"]');
+  if (!card) return;
+  card.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  const status = card.querySelector('.tc-status');
+  const done = p.status === 'done';
+  if (status) {
+    status.textContent = done ? ('Finished - exit code ' + p.exit_code + (p.timed_out ? ' (stopped at the time limit)' : '') + '.')
+      : p.status === 'denied' ? 'Denied - nothing ran.'
+      : p.status === 'expired' ? 'No answer in time - nothing ran.'
+      : "Termux didn't report back - it may or may not have run.";
+  }
+  if (done && p.output) { const out = document.createElement('div'); out.className = 'tc-out'; out.textContent = p.output; card.appendChild(out); }
+}
+
+// Is the Termux bridge set up and is the script running? Shown in the menu.
+async function refreshTermuxMenu() {
+  const item = $('m-termux');
+  try {
+    const s = await api('/api/term/status');
+    if (!s.enabled) { item.classList.add('hidden'); return; }
+    item.classList.remove('hidden');
+    $('m-termux-text').textContent = s.connected ? 'Termux: connected' : 'Termux: not running - start termux_agent.py';
+  } catch (e) { item.classList.add('hidden'); }
+}
+$('m-termux').addEventListener('click', refreshTermuxMenu);
+
+// Only one live B.E.T.A. tab: opening another (for example by tapping a notification) takes over, and this one steps aside.
+let replacedByNewerTab = false;
+(function oneLiveTab() {
+  let ch = null;
+  try { ch = new BroadcastChannel('beta-tabs'); } catch (e) { return; }
+  const me = Math.random().toString(36).slice(2);
+  ch.onmessage = (m) => {
+    if (!m.data || m.data.type !== 'takeover' || m.data.id === me || replacedByNewerTab) return;
+    replacedByNewerTab = true;
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;background:rgba(5,26,34,.97);color:#fff;font:16px/1.5 system-ui,sans-serif';
+    const box = document.createElement('div');
+    box.innerHTML = '<div style="font-size:20px;font-weight:700;margin-bottom:8px">B.E.T.A. moved to a newer tab</div>' +
+      '<div style="opacity:.8;margin-bottom:18px">This tab stopped updating so the two do not clash. You can close it.</div>';
+    const btn = document.createElement('button');
+    btn.textContent = 'Use this tab again';
+    btn.style.cssText = 'padding:10px 18px;border-radius:10px;border:1px solid #fff;background:transparent;color:#fff;font:inherit';
+    btn.onclick = () => location.reload();
+    box.appendChild(btn); ov.appendChild(box); document.body.appendChild(ov);
+  };
+  ch.postMessage({ type: 'takeover', id: me });
+})();
 
 // ---- notifications: "your reply is ready", even after you have left the app (Web Push) ----
 const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
