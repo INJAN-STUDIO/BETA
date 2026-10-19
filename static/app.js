@@ -39,6 +39,11 @@ const ICONS = {
   loader: '<path d="M21 12a9 9 0 11-6.2-8.56"/>',
   'play-fill': '<path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/>',
   'arrow-down': '<path d="M12 5v14M19 12l-7 7-7-7"/>',
+  lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>',
+  unlock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 019.9-1"/>',
+  mail: '<path d="M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z"/><polyline points="22,6 12,13 2,6"/>',
+  activity: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+  cpu: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>',
   terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
   file: '<path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/>',
   bell: '<path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>',
@@ -457,8 +462,18 @@ function addMessage(role, text, animate) {
   else {
     const rich = renderRich(text);
     el.appendChild(rich);
-    const bar = document.createElement('div');       // "Listen": reads this reply aloud (Edge voice, Brian)
+    const bar = document.createElement('div');       // "Copy" at the left end, "Listen" (reads the reply aloud, Edge voice Brian) at the right
     bar.className = 'msg-actions';
+    const cb = document.createElement('button');
+    cb.className = 'listen-btn copy-btn';
+    cb.setAttribute('aria-label', 'Copy this whole reply');
+    cb.innerHTML = iconSvg('copy') + 'Copy';
+    cb.addEventListener('click', async () => {
+      const ok = await copyText(text);
+      cb.innerHTML = iconSvg(ok ? 'check' : 'copy') + (ok ? 'Copied' : 'Copy failed');
+      setTimeout(() => { cb.innerHTML = iconSvg('copy') + 'Copy'; }, 1600);
+    });
+    bar.appendChild(cb);
     const lb = document.createElement('button');
     lb.className = 'listen-btn';
     lb.setAttribute('aria-label', 'Read this reply aloud');
@@ -751,13 +766,19 @@ function speakable(text) {
 // server's voice can't be reached.
 // ---------------------------------------------------------------------------
 const ttsAudio = new Audio();
-const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAABErAAABAAgAZGF0YQAAAAA=';
+// A real (quarter-second) silent clip. The old one had no audio data at all, so playing it failed, and the failure made
+// the page re-run the "unlock" on every touch - including the touch that starts a scroll - which swapped the voice for
+// silence while the button still said "playing".
+const SILENT_WAV = 'data:audio/wav;base64,UklGRvQHAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YdAHAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
 let ttsToken = 0, ttsAbort = null, ttsUrl = null, ttsBtn = null, audioPrimed = false;
+let ttsPrimeTries = 0, ttsIntentionalPause = false, ttsResumeTries = 0;
 
 // Browsers only allow sound after you've touched the page. The first tap "unlocks" the audio element
 // (with a silent clip), so a reply can be read aloud later without another tap.
 function primeAudio() {
-  if (audioPrimed) return;
+  if (audioPrimed || ttsPrimeTries >= 3) return;
+  if (ttsBtn || !ttsAudio.paused) return;            // never touch the audio element while a reply is loading or playing
+  ttsPrimeTries++;
   audioPrimed = true;
   try {
     ttsAudio.src = SILENT_WAV;
@@ -766,6 +787,15 @@ function primeAudio() {
   } catch (e) { audioPrimed = false; }
 }
 document.addEventListener('pointerdown', primeAudio, true);
+
+// If the browser or Android pauses the voice by itself, carry on (twice at most); if that fails, say so honestly.
+ttsAudio.addEventListener('pause', () => {
+  if (ttsIntentionalPause) { ttsIntentionalPause = false; return; }
+  if (ttsAudio.ended || !ttsBtn || !ttsBtn.classList.contains('playing')) return;
+  if (ttsResumeTries++ < 2) {
+    ttsAudio.play().catch(() => { if (ttsBtn) { setListenState(ttsBtn, 'idle'); ttsBtn = null; } });
+  } else if (ttsBtn) { setListenState(ttsBtn, 'idle'); ttsBtn = null; }
+});
 
 function setListenState(btn, state) {
   if (!btn) return;
@@ -779,12 +809,14 @@ function setListenState(btn, state) {
 function stopSpeaking() {
   ttsToken++;
   if (ttsAbort) { try { ttsAbort.abort(); } catch (e) { /* already done */ } ttsAbort = null; }
+  if (!ttsAudio.paused) ttsIntentionalPause = true;
   try { ttsAudio.pause(); } catch (e) { /* nothing playing */ }
   if (window.speechSynthesis) { try { speechSynthesis.cancel(); } catch (e) { /* ignore */ } }
   if (ttsBtn) { setListenState(ttsBtn, 'idle'); ttsBtn = null; }
 }
 
 async function speak(text, btn) {
+  ttsResumeTries = 0;
   stopSpeaking();
   const mine = ++ttsToken;
   ttsBtn = btn || null;
@@ -982,6 +1014,9 @@ function handleEvent(ev) {
     else if (p.kind === 'file') addFiles(p);
     else if (p.kind === 'termux_ask') addTermuxAsk(p);
     else if (p.kind === 'termux_result') addTermuxResult(p);
+    else if (p.kind === 'preview') addPreview(p);
+    else if (p.kind === 'k10_ask') addK10Ask(p);
+    else if (p.kind === 'k10_result') addK10Result(p);
     else addGallery(p);
   }
   else if (ev.type === 'reply') {
@@ -999,7 +1034,7 @@ async function pollJob(job) {
     if (stoppedJob === job || replacedByNewerTab) return;
     let p;
     try {
-      p = await api(`/api/poll?job=${job}&after=${after}&h=${document.hidden ? 1 : 0}`);
+      p = await api(`/api/poll?job=${job}&after=${after}&h=${isAway() ? 1 : 0}`);
     } catch (err) {
       if (err.status === 404 || err.status === 401) return;    // job gone (server restarted) or logged out
       await sleep(2000); continue;                              // flaky connection - just try again
@@ -1028,7 +1063,7 @@ $('send-btn').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 const show = (id) => $(id).classList.remove('hidden');
 const hide = (id) => $(id).classList.add('hidden');
-$('menu-btn').addEventListener('click', () => { refreshVoiceMenu(); refreshNotifyMenu(); refreshTermuxMenu(); show('menu'); });
+$('menu-btn').addEventListener('click', () => { refreshVoiceMenu(); refreshNotifyMenu(); refreshTermuxMenu(); refreshModelMenu(); refreshK10Menu(); show('menu'); });
 $('menu-close').addEventListener('click', () => hide('menu'));
 $('menu').addEventListener('click', (e) => { if (e.target === $('menu')) hide('menu'); });
 $('memory').addEventListener('click', (e) => { if (e.target === $('memory')) hide('memory'); });
@@ -1185,24 +1220,28 @@ function addFiles(p) {
   addEl(card);
 }
 
+function cardLabel(text) { const d = document.createElement('div'); d.className = 'cardlabel'; d.textContent = text; return d; }
+
 function addTermuxAsk(p) {
   const card = document.createElement('div');
   card.className = 'msg ai termcard';
   card.dataset.termId = p.id;
-  const t = document.createElement('div'); t.className = 'cardtitle'; t.textContent = 'B.E.T.A. wants to run this in Termux';
+  const t = document.createElement('div'); t.className = 'cardtitle'; t.textContent = 'B.E.T.A. needs your permission to use Termux';
   card.appendChild(t);
-  if (p.explanation) { const why = document.createElement('div'); why.textContent = p.explanation; card.appendChild(why); }
+  card.appendChild(cardLabel('What it wants to do'));
+  const why = document.createElement('div'); why.textContent = p.explanation || '(no explanation given)'; card.appendChild(why);
+  card.appendChild(cardLabel('The exact command'));
   const cmd = document.createElement('div'); cmd.className = 'tc-cmd'; cmd.textContent = p.command; card.appendChild(cmd);
   const actions = document.createElement('div'); actions.className = 'tc-actions';
-  const run = document.createElement('button'); run.className = 'fc-btn primary'; run.textContent = 'Run';
-  const deny = document.createElement('button'); deny.className = 'fc-btn'; deny.textContent = 'Deny';
+  const run = document.createElement('button'); run.className = 'fc-btn primary'; run.textContent = 'Accept';
+  const deny = document.createElement('button'); deny.className = 'fc-btn'; deny.textContent = 'Reject';
   actions.appendChild(run); actions.appendChild(deny); card.appendChild(actions);
-  const status = document.createElement('div'); status.className = 'tc-status'; status.textContent = 'Nothing runs until you tap Run.'; card.appendChild(status);
+  const status = document.createElement('div'); status.className = 'tc-status'; status.textContent = 'Nothing runs until you tap Accept.'; card.appendChild(status);
   const decide = async (approve) => {
     run.disabled = deny.disabled = true;
     try {
       await api('/api/term/decide', { method: 'POST', body: { id: p.id, approve } });
-      status.textContent = approve ? 'Approved - waiting for Termux...' : 'Denied.';
+      status.textContent = approve ? 'Accepted - waiting for Termux...' : 'Rejected.';
     } catch (e) {
       status.textContent = e.status === 410 ? 'This request has expired.' : (e.message || "Couldn't send your answer.");
     }
@@ -1220,7 +1259,7 @@ function addTermuxResult(p) {
   const done = p.status === 'done';
   if (status) {
     status.textContent = done ? ('Finished - exit code ' + p.exit_code + (p.timed_out ? ' (stopped at the time limit)' : '') + '.')
-      : p.status === 'denied' ? 'Denied - nothing ran.'
+      : p.status === 'denied' ? 'Rejected - nothing ran.'
       : p.status === 'expired' ? 'No answer in time - nothing ran.'
       : "Termux didn't report back - it may or may not have run.";
   }
@@ -1262,6 +1301,300 @@ let replacedByNewerTab = false;
   ch.postMessage({ type: 'takeover', id: me });
 })();
 
+// ---------------------------------------------------------------------------
+// v2.4: styles, previews, K-10 cards, model picker, Gemini traffic, K-10 mail screens
+// ---------------------------------------------------------------------------
+(function injectMoreStyles() {
+  const st = document.createElement('style');
+  st.textContent = `
+    #menu .sheet { max-height: 86vh !important; overflow-y: auto !important; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+    .msg-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .btn-primary svg { width: 18px; height: 18px; vertical-align: -3px; margin-right: 6px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+    .cardlabel { font-size: .75em; letter-spacing: .05em; text-transform: uppercase; opacity: .65; margin-top: 10px; }
+    .pv-frame { width: 100%; height: 340px; border: 1px solid rgba(127,127,127,.35); border-radius: 12px; background: #fff; display: block; margin-top: 6px; }
+    .pv-full { position: fixed; inset: 0; z-index: 9000; background: rgba(0,0,0,.92); display: flex; flex-direction: column; }
+    .pv-full iframe { flex: 1; border: 0; background: #fff; width: 100%; }
+    .pv-bar { display: flex; gap: 8px; padding: 10px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: #888; flex: none; }
+    .dot.ok { background: #2ecc71; } .dot.slow { background: #f1c40f; } .dot.limited { background: #e67e22; }
+    .dot.overloaded, .dot.timeout, .dot.error { background: #e74c3c; }
+    .tr-banner { padding: 10px 12px; border-radius: 12px; font-weight: 600; margin-bottom: 8px; background: rgba(127,127,127,.16); }
+    .tr-banner.heavy { background: rgba(231,76,60,.28); } .tr-banner.busy, .tr-banner.quota { background: rgba(230,126,34,.28); }
+    .tr-banner.slow { background: rgba(241,196,15,.25); } .tr-banner.ok { background: rgba(46,204,113,.22); }
+    .tr-row { padding: 8px 4px; border-bottom: 1px solid rgba(127,127,127,.25); }
+    .tr-head { display: flex; align-items: center; gap: 8px; } .tr-name { font-weight: 600; flex: 1; } .tr-ms { opacity: .7; font-size: .85em; }
+    .tr-hist { display: flex; gap: 3px; margin-top: 5px; flex-wrap: wrap; } .tr-hist .dot { width: 7px; height: 7px; }
+    .tr-sub { opacity: .75; font-size: .85em; margin-top: 2px; }
+    .mdl-row { display: block; width: 100%; text-align: left; } .mdl-row.on { outline: 2px solid rgba(30,150,255,.8); border-radius: 12px; }
+    .mdl-sub { opacity: .7; font-size: .85em; display: block; }
+    .k10-tabs { display: flex; gap: 8px; margin: 4px 0 10px; }
+    .k10-item { display: block; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 8px; border-radius: 12px; color: inherit; font: inherit;
+                border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.10); }
+    .k10-item.new { border-color: rgba(30,150,255,.85); }
+    .k10-subj { font-weight: 600; } .k10-meta { opacity: .7; font-size: .82em; } .k10-prev { opacity: .85; font-size: .9em; margin-top: 3px; }
+    .k10-text { white-space: pre-wrap; word-break: break-word; padding: 10px; border-radius: 10px; background: rgba(0,0,0,.35); margin: 6px 0; max-height: 42vh; overflow: auto; }
+    .k10-field { width: 100%; box-sizing: border-box; padding: 10px; margin: 6px 0; border-radius: 10px; border: 1px solid rgba(127,127,127,.5);
+                 background: rgba(127,127,127,.12); color: inherit; font: inherit; }
+  `;
+  document.head.appendChild(st);
+})();
+
+function agoText(sec) {
+  if (sec < 60) return 'just now';
+  if (sec < 3600) return Math.round(sec / 60) + ' min ago';
+  if (sec < 86400) return Math.round(sec / 3600) + ' h ago';
+  return Math.round(sec / 86400) + ' d ago';
+}
+
+// ---- HTML preview card (B.E.T.A.'s mockups and blueprints). The page runs in a locked box: no internet, no access to this app.
+function addPreview(p) {
+  const card = document.createElement('div');
+  card.className = 'msg ai filecard';
+  const t = document.createElement('div'); t.className = 'cardtitle'; t.textContent = 'Preview: ' + (p.title || 'blueprint');
+  card.appendChild(t);
+  const mk = () => {
+    const f = document.createElement('iframe');
+    f.setAttribute('sandbox', 'allow-scripts');            // no same-origin, no forms, no popups, no top navigation
+    f.setAttribute('referrerpolicy', 'no-referrer');
+    f.src = '/api/preview/' + encodeURIComponent(p.id);
+    return f;
+  };
+  const frame = mk(); frame.className = 'pv-frame'; card.appendChild(frame);
+  const row = document.createElement('div'); row.className = 'tc-actions'; row.style.marginTop = '8px';
+  const full = document.createElement('button'); full.className = 'fc-btn primary'; full.textContent = 'Full screen';
+  const dl = document.createElement('button'); dl.className = 'fc-btn'; dl.textContent = 'Download .html';
+  full.addEventListener('click', () => {
+    const ov = document.createElement('div'); ov.className = 'pv-full';
+    const bar = document.createElement('div'); bar.className = 'pv-bar';
+    const close = document.createElement('button'); close.className = 'fc-btn primary'; close.textContent = 'Close';
+    close.addEventListener('click', () => ov.remove());
+    bar.appendChild(close); ov.appendChild(bar); ov.appendChild(mk()); document.body.appendChild(ov);
+  });
+  dl.addEventListener('click', () => { window.location.href = '/api/file/' + encodeURIComponent(p.id); });
+  row.appendChild(full); row.appendChild(dl); card.appendChild(row);
+  const note = document.createElement('div'); note.className = 'tc-status';
+  note.textContent = 'A locked preview: it has no internet and cannot reach your account. Kept for a short while.';
+  card.appendChild(note);
+  addEl(card);
+}
+
+// ---- K-10: B.E.T.A. wants to mail ALPHA (you read the exact message, then Accept or Reject)
+function addK10Ask(p) {
+  const card = document.createElement('div');
+  card.className = 'msg ai termcard';
+  card.dataset.k10Id = p.id;
+  const t = document.createElement('div'); t.className = 'cardtitle'; t.textContent = 'B.E.T.A. wants to mail ALPHA (K-10)';
+  card.appendChild(t);
+  card.appendChild(cardLabel('Why')); const why = document.createElement('div'); why.textContent = p.explanation || '(no reason given)'; card.appendChild(why);
+  card.appendChild(cardLabel('Subject')); const sj = document.createElement('div'); sj.textContent = p.subject || '(none)'; card.appendChild(sj);
+  card.appendChild(cardLabel('Exactly what will be sent'));
+  const body = document.createElement('div'); body.className = 'k10-text'; body.textContent = p.body || '(empty)'; card.appendChild(body);
+  if (p.attachment) { card.appendChild(cardLabel('Attached file')); const a = document.createElement('div'); a.textContent = p.attachment.name + ' (' + fmtBytes(p.attachment.size) + ')'; card.appendChild(a); }
+  const actions = document.createElement('div'); actions.className = 'tc-actions'; actions.style.marginTop = '10px';
+  const yes = document.createElement('button'); yes.className = 'fc-btn primary'; yes.textContent = 'Accept';
+  const no = document.createElement('button'); no.className = 'fc-btn'; no.textContent = 'Reject';
+  actions.appendChild(yes); actions.appendChild(no); card.appendChild(actions);
+  const status = document.createElement('div'); status.className = 'tc-status'; status.textContent = 'Nothing is sent until you tap Accept.'; card.appendChild(status);
+  const decide = async (approve) => {
+    yes.disabled = no.disabled = true;
+    try { await api('/api/k10/decide', { method: 'POST', body: { id: p.id, approve } }); status.textContent = approve ? 'Accepted - sending...' : 'Rejected.'; }
+    catch (e) { status.textContent = e.status === 410 ? 'This request has expired.' : (e.message || "Couldn't send your answer."); }
+  };
+  yes.addEventListener('click', () => decide(true)); no.addEventListener('click', () => decide(false));
+  addEl(card);
+}
+function addK10Result(p) {
+  const card = document.querySelector('[data-k10-id="' + p.id + '"]');
+  if (!card) return;
+  card.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  const st = card.querySelector('.tc-status');
+  if (st) st.textContent = p.status === 'sent' ? 'Sent to ALPHA.' : p.status === 'rejected' ? 'Rejected - nothing was sent.'
+    : p.status === 'expired' ? 'No answer in time - nothing was sent.' : ('Could not send: ' + (p.detail || 'unknown problem'));
+}
+
+// ---- choose the model by hand
+const shortModel = (m) => String(m || '').replace(/^gemini-/, '').replace(/^openai\//, '');
+async function refreshModelMenu() {
+  try {
+    const d = await api('/api/models');
+    $('m-model-text').textContent = d.forced ? 'Model: ' + shortModel(d.active) + ' (you chose)' : 'Model: Auto (' + shortModel(d.active) + ' now)';
+    return d;
+  } catch (e) { $('m-model-text').textContent = 'Model: Auto'; return null; }
+}
+async function openModels() {
+  const body = $('models-body'); body.textContent = 'Loading…'; show('models');
+  const d = await refreshModelMenu();
+  if (!d) { body.textContent = "Couldn't load the models. Try again."; return; }
+  body.textContent = '';
+  const rows = [{ id: 'auto', title: 'Automatic (recommended)', sub: 'B.E.T.A. uses the best model that still has quota left and switches by itself.', on: !d.forced }];
+  d.models.forEach((m) => {
+    const isGroq = m.provider === 'groq';
+    rows.push({ id: isGroq ? 'groq' : m.model, title: shortModel(m.model) + (isGroq ? ' (Groq backup)' : ''),
+      sub: m.limit == null ? m.used + ' used today' : (m.remaining <= 0 ? 'used up for today' : m.remaining + ' of ' + m.limit + ' left today'),
+      on: d.forced === (isGroq ? 'groq' : m.model) });
+  });
+  rows.forEach((r) => {
+    const b = document.createElement('button'); b.className = 'sheet-item mdl-row' + (r.on ? ' on' : '');
+    const a = document.createElement('span'); a.textContent = r.title + (r.on ? '  ✓' : ''); b.appendChild(a);
+    const c = document.createElement('span'); c.className = 'mdl-sub'; c.textContent = r.sub; b.appendChild(c);
+    b.addEventListener('click', async () => {
+      try { await api('/api/model', { method: 'POST', body: { model: r.id } }); toast(r.id === 'auto' ? 'Automatic model choice' : 'Using ' + shortModel(r.id)); hide('models'); refreshModelMenu(); }
+      catch (e) { toast(e.message || "Couldn't switch the model.", true); }
+    });
+    body.appendChild(b);
+  });
+}
+$('m-model-pick').addEventListener('click', () => { hide('menu'); openModels(); });
+$('models-close').addEventListener('click', () => hide('models'));
+
+// ---- Gemini traffic (live check)
+let trafficTimer = null, trafficRuns = 0;
+function renderTraffic(d) {
+  const body = $('traffic-body'); body.textContent = '';
+  const ban = document.createElement('div'); ban.className = 'tr-banner ' + d.verdict; ban.textContent = d.message; body.appendChild(ban);
+  d.models.forEach((m) => {
+    const row = document.createElement('div'); row.className = 'tr-row';
+    const head = document.createElement('div'); head.className = 'tr-head';
+    const dot = document.createElement('span'); dot.className = 'dot ' + m.state; head.appendChild(dot);
+    const nm = document.createElement('span'); nm.className = 'tr-name'; nm.textContent = shortModel(m.model); head.appendChild(nm);
+    const ms = document.createElement('span'); ms.className = 'tr-ms'; ms.textContent = m.ms + ' ms'; head.appendChild(ms);
+    row.appendChild(head);
+    const sub = document.createElement('div'); sub.className = 'tr-sub'; sub.textContent = m.detail; row.appendChild(sub);
+    const hist = document.createElement('div'); hist.className = 'tr-hist';
+    (m.history || []).slice(-24).forEach((h) => { const x = document.createElement('span'); x.className = 'dot ' + h.state; x.title = h.state + ' ' + h.ms + ' ms'; hist.appendChild(x); });
+    row.appendChild(hist); body.appendChild(row);
+  });
+  const foot = document.createElement('div'); foot.className = 'tr-sub'; foot.style.marginTop = '8px';
+  foot.textContent = 'Checked at ' + new Date(d.checked_at * 1000).toLocaleTimeString() + '. Green = answering, yellow = slow, orange = limit reached, red = overloaded or silent. ';
+  const link = document.createElement('a'); link.textContent = "Google's own status page"; link.href = d.official_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+  foot.appendChild(link); foot.appendChild(document.createTextNode(' (it often lags behind real overloads).')); body.appendChild(foot);
+}
+async function runTraffic(force) {
+  const btn = $('traffic-refresh'); btn.disabled = true;
+  try { renderTraffic(await api('/api/gemini/status' + (force ? '?force=1' : ''))); $('traffic-note').textContent = ''; }
+  catch (e) { $('traffic-body').textContent = e.message || "Couldn't check the servers."; }
+  btn.disabled = false;
+}
+function closeTraffic() { if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; } hide('traffic'); }
+$('m-traffic').addEventListener('click', () => {
+  hide('menu'); show('traffic'); $('traffic-body').textContent = 'Asking the models…'; trafficRuns = 0; runTraffic(true);
+  if (trafficTimer) clearInterval(trafficTimer);
+  trafficTimer = setInterval(() => {                       // each check uses a little of each model's daily allowance, so it stops after a while
+    if (++trafficRuns > 10) { clearInterval(trafficTimer); trafficTimer = null; $('traffic-note').textContent = 'Live updates paused to save your daily allowance - tap Refresh now.'; return; }
+    runTraffic(false);
+  }, 30000);
+});
+$('traffic-refresh').addEventListener('click', () => runTraffic(true));
+$('traffic-close').addEventListener('click', closeTraffic);
+
+// ---- K-10 mail screens
+async function refreshK10Menu() {
+  const item = $('m-k10');
+  try {
+    const d = await api('/api/k10/info');
+    if (!d.enabled) { item.classList.add('hidden'); return; }
+    item.classList.remove('hidden');
+    $('m-k10-text').textContent = 'K-10 mail' + (d.new ? ' (' + d.new + ' new)' : '');
+  } catch (e) { item.classList.add('hidden'); }
+}
+function k10Time(ts) { return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+async function k10Tab(tab) {
+  const body = $('k10-body'); body.textContent = 'Loading…';
+  if (tab === 'compose') return k10Compose();
+  try {
+    const d = await api('/api/k10/list?box=' + tab);
+    body.textContent = '';
+    if (!d.messages.length) { body.textContent = tab === 'inbox' ? 'No mail from ALPHA yet.' : 'Nothing sent yet.'; return; }
+    d.messages.forEach((m) => {
+      const b = document.createElement('button'); b.className = 'k10-item' + (m.state === 'new' && tab === 'inbox' ? ' new' : '');
+      const s1 = document.createElement('div'); s1.className = 'k10-subj'; s1.textContent = m.subject || '(no subject)'; b.appendChild(s1);
+      const s2 = document.createElement('div'); s2.className = 'k10-meta';
+      s2.textContent = (tab === 'inbox' ? 'From ALPHA' : 'To ALPHA') + ' · ' + k10Time(m.ts) + ' · ' + m.state + (m.attachment ? ' · file: ' + m.attachment.name : ''); b.appendChild(s2);
+      if (m.preview) { const s3 = document.createElement('div'); s3.className = 'k10-prev'; s3.textContent = m.preview; b.appendChild(s3); }
+      b.addEventListener('click', () => k10Open(m.id, tab)); body.appendChild(b);
+    });
+  } catch (e) { body.textContent = e.message || "Couldn't open the mailbox."; }
+}
+async function k10Open(id, tab) {
+  const body = $('k10-body'); body.textContent = 'Loading…';
+  try {
+    const m = await api('/api/k10/msg/' + encodeURIComponent(id));
+    body.textContent = '';
+    const meta = document.createElement('div'); meta.className = 'k10-meta';
+    meta.textContent = (m.from === 'beta' ? 'From B.E.T.A.' : 'From ALPHA') + ' to ' + (m.to === 'beta' ? 'B.E.T.A.' : 'ALPHA') + ' · ' + k10Time(m.ts) + ' · ' + m.state; body.appendChild(meta);
+    const sj = document.createElement('div'); sj.className = 'k10-subj'; sj.textContent = m.subject || '(no subject)'; sj.style.marginTop = '6px'; body.appendChild(sj);
+    const tx = document.createElement('div'); tx.className = 'k10-text'; tx.textContent = m.body || '(empty)'; body.appendChild(tx);
+    if (m.attachment) {
+      body.appendChild(cardLabel('Attached file: ' + m.attachment.name));
+      const at = document.createElement('div'); at.className = 'k10-text'; at.textContent = m.attachment.text.slice(0, 6000) + (m.attachment.text.length > 6000 ? '\n…(cut off here; the full file is saved when you accept)' : ''); body.appendChild(at);
+    }
+    const row = document.createElement('div'); row.className = 'tc-actions'; row.style.marginTop = '10px';
+    const back = document.createElement('button'); back.className = 'fc-btn'; back.textContent = 'Back'; back.addEventListener('click', () => k10Tab(tab));
+    if (m.to === 'beta' && m.state === 'new') {
+      const yes = document.createElement('button'); yes.className = 'fc-btn primary'; yes.textContent = 'Accept';
+      const no = document.createElement('button'); no.className = 'fc-btn'; no.textContent = 'Reject';
+      yes.addEventListener('click', async () => {
+        yes.disabled = no.disabled = true;
+        try {
+          const r = await api('/api/k10/act', { method: 'POST', body: { id: m.id, action: 'accept' } });
+          hide('k10');
+          if (r.files && r.files.length) addFiles({ files: r.files });
+          $('input').value = r.text; autosize();
+          if (busy) toast('B.E.T.A. is busy - the mail is in your message box; send it when ready.', true); else send();   // you see it go through as your message
+        } catch (e) { toast(e.message || "Couldn't accept it.", true); yes.disabled = no.disabled = false; }
+      });
+      no.addEventListener('click', async () => { try { await api('/api/k10/act', { method: 'POST', body: { id: m.id, action: 'reject' } }); toast('Rejected'); k10Tab('inbox'); refreshK10Menu(); } catch (e) { toast(e.message, true); } });
+      row.appendChild(yes); row.appendChild(no);
+      const hint = document.createElement('div'); hint.className = 'tc-status'; hint.textContent = 'B.E.T.A. (the AI) has not seen this. Accept shares it with B.E.T.A. as a message from you.'; body.appendChild(row); body.appendChild(hint); body.appendChild(back); return;
+    }
+    row.appendChild(back); body.appendChild(row);
+  } catch (e) { body.textContent = e.message || "Couldn't open that message."; }
+}
+function k10Compose() {
+  const body = $('k10-body'); body.textContent = '';
+  body.appendChild(cardLabel('To')); const to = document.createElement('div'); to.textContent = 'ALPHA'; body.appendChild(to);
+  const sj = document.createElement('input'); sj.className = 'k10-field'; sj.placeholder = 'Subject'; sj.maxLength = 150; body.appendChild(sj);
+  const tx = document.createElement('textarea'); tx.className = 'k10-field'; tx.rows = 7; tx.placeholder = 'Message'; body.appendChild(tx);
+  const fi = document.createElement('input'); fi.type = 'file'; fi.accept = '.txt,.md,.py,.js,.json,.csv,.html,.css,.sh,.log,.yaml,.yml,.toml,.ini'; fi.className = 'k10-field'; body.appendChild(fi);
+  const go = document.createElement('button'); go.className = 'fc-btn primary'; go.textContent = 'Send to ALPHA'; body.appendChild(go);
+  const st = document.createElement('div'); st.className = 'tc-status'; st.textContent = 'You wrote this, so it is sent straight away, encrypted.'; body.appendChild(st);
+  go.addEventListener('click', async () => {
+    go.disabled = true;
+    try {
+      let attachment_name, attachment_text;
+      if (fi.files && fi.files[0]) {
+        if (fi.files[0].size > 200000) throw new Error('That file is too big (limit 200 KB).');
+        attachment_name = fi.files[0].name; attachment_text = await fi.files[0].text();
+      }
+      await api('/api/k10/send', { method: 'POST', body: { subject: sj.value, body: tx.value, attachment_name, attachment_text } });
+      toast('Sent to ALPHA'); k10Tab('sent');
+    } catch (e) { st.textContent = e.message || "Couldn't send it."; go.disabled = false; }
+  });
+}
+$('m-k10').addEventListener('click', () => { hide('menu'); show('k10'); k10Tab('inbox'); });
+$('k10-t-inbox').addEventListener('click', () => k10Tab('inbox'));
+$('k10-t-sent').addEventListener('click', () => k10Tab('sent'));
+$('k10-t-compose').addEventListener('click', () => k10Tab('compose'));
+$('k10-close').addEventListener('click', () => { hide('k10'); refreshK10Menu(); });
+
+// ---- "are you looking at B.E.T.A.?" - told to the server the moment it changes, so alerts fire reliably
+let lastPresence = null;
+function isAway() { return document.hidden || !document.hasFocus(); }
+function sendPresence(away) {
+  if (replacedByNewerTab || away === lastPresence) return;       // a tab that stepped aside must not report
+  lastPresence = away;
+  try {
+    fetch('/api/presence', { method: 'POST', credentials: 'same-origin', keepalive: true,
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'beta' }, body: JSON.stringify({ away }) }).catch(() => {});
+  } catch (e) { /* ignore */ }
+}
+document.addEventListener('visibilitychange', () => sendPresence(isAway()));
+window.addEventListener('pagehide', () => sendPresence(true));
+window.addEventListener('pageshow', () => { lastPresence = null; sendPresence(isAway()); });
+window.addEventListener('blur', () => sendPresence(true));
+window.addEventListener('focus', () => sendPresence(isAway()));
+document.addEventListener('pointerdown', () => { if (lastPresence) sendPresence(isAway()); }, true);
+
 // ---- notifications: "your reply is ready", even after you have left the app (Web Push) ----
 const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const urlB64ToBytes = (s) => {
@@ -1280,7 +1613,9 @@ async function refreshNotifyMenu() {
     notifyMode = 'ntfy'; ntfyOn = !!info.ntfy_on;
     $('m-notify').classList.remove('hidden');
     setIcon($('m-notify-icon'), ntfyOn ? 'bell' : 'bell-off');
-    $('m-notify-text').textContent = 'Notify me when a reply is ready (ntfy): ' + (ntfyOn ? 'on' : 'off');
+    let last = '';
+    if (ntfyOn && info.last) last = info.last.ok ? ' - last alert sent ' + agoText(info.last.ago) : ' - last alert FAILED (' + info.last.detail + ')';
+    $('m-notify-text').textContent = 'Notify me when a reply is ready (ntfy): ' + (ntfyOn ? 'on' : 'off') + last;
     return;
   }
   notifyMode = 'webpush';
@@ -1456,6 +1791,7 @@ async function startApp(fromId) {
   updateUsage(st.usage);
   scrollDown(true);
   syncPushSub();
+  lastPresence = null; sendPresence(isAway());
   if (st.active_job) {            // a reply was still being worked on when the page reloaded
     currentJob = st.active_job;
     setBusy(true);
@@ -1469,7 +1805,7 @@ async function doLogin() {
   if (!pw) return;
   $('login-error').textContent = '';
   const btn = $('login-btn');
-  btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Unlocking…';
+  btn.disabled = true; btn.classList.add('loading'); btn.innerHTML = iconSvg('lock') + 'Unlocking…';
   try {
     await api('/api/login', { method: 'POST', body: { password: pw } });
     $('password').value = '';
@@ -1478,7 +1814,7 @@ async function doLogin() {
     $('login-error').textContent = e.message;
     const card = document.querySelector('#login .screen-card');
     card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');   // shake on a wrong password
-  } finally { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = 'Unlock'; }
+  } finally { btn.disabled = false; btn.classList.remove('loading'); btn.innerHTML = iconSvg('unlock') + 'Unlock'; }
 }
 $('login-btn').addEventListener('click', doLogin);
 $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
