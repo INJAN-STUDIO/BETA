@@ -70,7 +70,7 @@ def _build_docx(text):
     return out.getvalue()
 
 
-def create(path, content):
+def create(path, content, max_bytes=None):
     """Keep a new file. Returns {'id', 'name', 'size'}. Raises FileError."""
     name = safe_name(path)
     ext = os.path.splitext(name)[1].lower()
@@ -82,8 +82,9 @@ def create(path, content):
         raise FileError("That file type isn't supported here (text, code and .docx files only).")
     if not data:
         raise FileError("The file would be empty.")
-    if len(data) > MAX_BYTES:
-        raise FileError("That file is too big (limit %d KB)." % (MAX_BYTES // 1000))
+    limit = min(max_bytes or MAX_BYTES, MAX_BYTES)
+    if len(data) > limit:
+        raise FileError("That file is too big (limit %d KB)." % (limit // 1000))
     fid = uuid.uuid4().hex[:16]
     with _lock:
         _store[fid] = {"name": name, "bytes": data, "mime": mime}

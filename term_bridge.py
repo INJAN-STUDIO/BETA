@@ -79,6 +79,10 @@ def request_command(command, explanation, emit, timeout_seconds=RUN_TIMEOUT_DEFA
         return "No command was given."
     if len(command) > 2000:
         return "That command is too long (limit 2000 characters)."
+    explanation = str(explanation or "").strip()
+    if len(explanation) < 8:
+        return ("Karachi needs to see, in plain words, what you want to do and why. Put one or two short sentences in "
+                "'explanation' and call run_command again.")
     if not enabled():
         return "Termux isn't set up on the server (TERM_TOKEN / TERM_SECRET are missing)."
     if not connected():
@@ -95,7 +99,7 @@ def request_command(command, explanation, emit, timeout_seconds=RUN_TIMEOUT_DEFA
             _items.pop(k, None)
         _items[item["id"]] = item
     _touch()
-    emit({"kind": "termux_ask", "id": item["id"], "command": command, "explanation": str(explanation or "")[:200]})
+    emit({"kind": "termux_ask", "id": item["id"], "command": command, "explanation": explanation[:400]})
     if on_ask:
         try:
             on_ask(command)

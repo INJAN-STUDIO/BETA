@@ -35,7 +35,7 @@
     <div class="screen-title">B.E.T.A</div>
     <div class="screen-sub">Best Everyday Technical Assistant</div>
     <input id="password" class="field" type="password" placeholder="Password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
-    <button id="login-btn" class="btn-primary">Unlock</button>
+    <button id="login-btn" class="btn-primary"><span data-icon="unlock"></span>Unlock</button>
     <div id="login-error" class="error-line"></div>
   </div>
 </div>
@@ -88,14 +88,47 @@
     <button class="sheet-item" id="m-voice"><span id="m-voice-icon" data-icon="speaker"></span><span id="m-voice-text">Read replies aloud (Brian): off</span></button>
     <button class="sheet-item" id="m-notify"><span id="m-notify-icon" data-icon="bell-off"></span><span id="m-notify-text">Notify me when a reply is ready: off</span></button>
     <button class="sheet-item hidden" id="m-termux"><span data-icon="terminal"></span><span id="m-termux-text">Termux: checking…</span></button>
+    <button class="sheet-item" id="m-model-pick"><span data-icon="cpu"></span><span id="m-model-text">Model: Auto</span></button>
+    <button class="sheet-item" id="m-traffic"><span data-icon="activity"></span><span>Gemini traffic (live check)</span></button>
+    <button class="sheet-item hidden" id="m-k10"><span data-icon="mail"></span><span id="m-k10-text">K-10 mail</span></button>
     <button class="sheet-item" id="m-theme"><span id="m-theme-icon" data-icon="palette"></span><span id="m-theme-text">Theme: Logo colours · Dark</span></button>
     <button class="sheet-item" id="m-size"><span data-icon="text"></span><span id="m-size-text">Text size: Medium</span></button>
     <button class="sheet-item" id="m-install"><span data-icon="download"></span><span>Install as an app</span></button>
     <button class="sheet-item" id="m-clear"><span data-icon="trash"></span>Clear this conversation</button>
-    <button class="sheet-item" id="m-logout"><span data-icon="logout"></span>Lock B.E.T.A.</button>
+    <button class="sheet-item" id="m-logout"><span data-icon="lock"></span>Lock B.E.T.A.</button>
     <div class="sheet-models" id="m-models"></div>
     <div class="sheet-version" id="m-version"></div>
     <button class="sheet-close" id="menu-close">Close</button>
+  </div>
+</div>
+
+<!-- Choose the model by hand -->
+<div id="models" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Model</div>
+    <div id="models-body" class="sheet-scroll"></div>
+    <button class="sheet-close" id="models-close">Close</button>
+  </div>
+</div>
+
+<!-- Gemini traffic: a live check of how busy Google's servers are -->
+<div id="traffic" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Gemini traffic</div>
+    <div id="traffic-body" class="sheet-scroll"></div>
+    <div id="traffic-note" class="sheet-text"></div>
+    <button class="sheet-close" id="traffic-refresh">Refresh now</button>
+    <button class="sheet-close" id="traffic-close">Close</button>
+  </div>
+</div>
+
+<!-- K-10 mail -->
+<div id="k10" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">K-10 mail</div>
+    <div class="k10-tabs"><button id="k10-t-inbox" class="fc-btn">Inbox</button><button id="k10-t-sent" class="fc-btn">Sent</button><button id="k10-t-compose" class="fc-btn primary">Write</button></div>
+    <div id="k10-body" class="sheet-scroll"></div>
+    <button class="sheet-close" id="k10-close">Close</button>
   </div>
 </div>
 

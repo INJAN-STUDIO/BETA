@@ -816,6 +816,10 @@ class Agent:
             encoded = base64.b64encode(f.read()).decode("utf-8")
         return f"data:{mime_type};base64,{encoded}"
 
+    def _extra_tools(self):
+        """Extra {tool name: method} entries a subclass wants available. None by default."""
+        return {}
+
     @staticmethod
     def _describe_tool_call(func_name, args):
         """Human-readable one-liner for the GUI's tool activity feed -
@@ -949,6 +953,7 @@ class Agent:
             "copy_to_clipboard": self._copy_to_clipboard,
             "send_email": self._send_email,
         }
+        tool_funcs.update(self._extra_tools())      # hook: a subclass (B.E.T.A.) can add tools; ALPHA's default adds none
         if ALLOWED_TOOLS is not None:
             tool_funcs = {k: v for k, v in tool_funcs.items() if k in ALLOWED_TOOLS}
 
