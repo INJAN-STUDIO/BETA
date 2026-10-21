@@ -22,7 +22,7 @@
 <div id="wake" class="screen">
   <div class="screen-card">
     <div class="logo-wrap"><img class="logo-img" src="/static/logo.jpg" alt="B.E.T.A" width="116" height="116"><span class="logo-ring"></span></div>
-    <div class="screen-title">B.E.T.A</div>
+    <div class="screen-title"><svg class="wordmark wm-big" viewBox="-2 0 112 28" role="img" aria-label="B.E.T.A" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2L2 26"/><path d="M2 2L10 2Q16.5 2 16.5 8Q16.5 14 10 14L2 14"/><path d="M2 14L11 14Q18.5 14 18.5 20Q18.5 26 11 26L2 26"/><path d="M45 2L31 2L31 26L45 26"/><path d="M31 14L42 14"/><path d="M57 2L75 2"/><path d="M66 2L66 26"/><path d="M87 26L97 2L107 26"/><path d="M90.6 18L103.4 18"/><circle cx="24.75" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="51" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="81" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/></svg></div>
     <div id="wake-text" class="screen-sub">Connecting…</div>
     <div class="spinner"></div>
   </div>
@@ -32,7 +32,7 @@
 <div id="login" class="screen hidden">
   <div class="screen-card">
     <div class="logo-wrap"><img class="logo-img" src="/static/logo.jpg" alt="B.E.T.A" width="116" height="116"><span class="logo-ring"></span></div>
-    <div class="screen-title">B.E.T.A</div>
+    <div class="screen-title"><svg class="wordmark wm-big" viewBox="-2 0 112 28" role="img" aria-label="B.E.T.A" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2L2 26"/><path d="M2 2L10 2Q16.5 2 16.5 8Q16.5 14 10 14L2 14"/><path d="M2 14L11 14Q18.5 14 18.5 20Q18.5 26 11 26L2 26"/><path d="M45 2L31 2L31 26L45 26"/><path d="M31 14L42 14"/><path d="M57 2L75 2"/><path d="M66 2L66 26"/><path d="M87 26L97 2L107 26"/><path d="M90.6 18L103.4 18"/><circle cx="24.75" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="51" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="81" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/></svg></div>
     <div class="screen-sub">Best Everyday Technical Assistant</div>
     <input id="password" class="field" type="password" placeholder="Password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
     <button id="login-btn" class="btn-primary"><span data-icon="unlock"></span>Unlock</button>
@@ -46,7 +46,7 @@
     <div class="brand">
       <div class="blob"></div>
       <div>
-        <div class="brand-name">B.E.T.A</div>
+        <div class="brand-name"><svg class="wordmark wm-small" viewBox="-2 0 112 28" role="img" aria-label="B.E.T.A" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2L2 26"/><path d="M2 2L10 2Q16.5 2 16.5 8Q16.5 14 10 14L2 14"/><path d="M2 14L11 14Q18.5 14 18.5 20Q18.5 26 11 26L2 26"/><path d="M45 2L31 2L31 26L45 26"/><path d="M31 14L42 14"/><path d="M57 2L75 2"/><path d="M66 2L66 26"/><path d="M87 26L97 2L107 26"/><path d="M90.6 18L103.4 18"/><circle cx="24.75" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="51" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="81" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/></svg></div>
         <div class="brand-sub" id="state-label">ready</div>
       </div>
     </div>
@@ -76,14 +76,16 @@
         <button id="send-btn" class="send-btn" aria-label="Send" data-icon="send"></button>
       </div>
     </div>
-    <input id="file-input" type="file" accept="image/*,.txt,.md,.py,.js,.json,.csv,.html,.css,.xml,.yaml,.yml,.sh,.log,.docx" multiple hidden>
+    <input id="file-input" type="file" accept="image/*,video/*,.mp4,.mov,.webm,.3gp,.mkv,.txt,.md,.py,.js,.json,.csv,.html,.css,.xml,.yaml,.yml,.sh,.log,.docx" multiple hidden>
   </footer>
 </div>
 
 <!-- Menu -->
 <div id="menu" class="overlay hidden">
-  <div class="sheet">
+  <div class="sheet menu-sheet">
     <div class="sheet-title">Menu</div>
+    <div class="menu-scroll">
+    <button class="sheet-item" id="m-help"><span data-icon="help"></span>What can B.E.T.A. do?</button>
     <button class="sheet-item" id="m-memory"><span data-icon="bookmark"></span>Long-term memory</button>
     <button class="sheet-item" id="m-voice"><span id="m-voice-icon" data-icon="speaker"></span><span id="m-voice-text">Read replies aloud (Brian): off</span></button>
     <button class="sheet-item" id="m-notify"><span id="m-notify-icon" data-icon="bell-off"></span><span id="m-notify-text">Notify me when a reply is ready: off</span></button>
@@ -98,7 +100,29 @@
     <button class="sheet-item" id="m-logout"><span data-icon="lock"></span>Lock B.E.T.A.</button>
     <div class="sheet-models" id="m-models"></div>
     <div class="sheet-version" id="m-version"></div>
+    </div>
     <button class="sheet-close" id="menu-close">Close</button>
+  </div>
+</div>
+
+<!-- What can B.E.T.A. do? -->
+<div id="help" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">What B.E.T.A. can do</div>
+    <div id="help-body" class="sheet-scroll"></div>
+    <button class="sheet-close" id="help-close">Close</button>
+  </div>
+</div>
+
+<!-- Are you sure? -->
+<div id="confirm" class="overlay hidden">
+  <div class="sheet">
+    <div class="sheet-title" id="confirm-title">Are you sure?</div>
+    <div id="confirm-text" class="sheet-text"></div>
+    <div class="tc-actions" style="margin:12px 0 4px">
+      <button class="fc-btn danger" id="confirm-yes">Yes</button>
+      <button class="fc-btn primary" id="confirm-no">Cancel</button>
+    </div>
   </div>
 </div>
 

@@ -44,6 +44,7 @@ import k10_bridge
 import k10_core
 import storage
 import term_bridge
+import video_store
 import tts_edge
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -51,13 +52,13 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 app = Flask(__name__, static_folder=None)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)   # Render sits behind a proxy: real client IP + https
-app.config["MAX_CONTENT_LENGTH"] = 14 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024      # room for a 25 MB video clip; other uploads are capped separately below
 
 # THE release number - the only place you change it. Use plain numbers: 1.1 for a small fix or tweak, 2.0 for a
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "2.5"
+APP_VERSION = "2.6"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -184,7 +185,7 @@ def _friendly_error(e):
     return text[:600] or "Something went wrong."
 
 
-def _run_job(job, text, saved_paths, tmpdir):
+def _run_job(job, text, saved_paths, tmpdir, videos=None):
     global CURRENT_JOB
     CURRENT_JOB = job
     try:
@@ -199,6 +200,11 @@ def _run_job(job, text, saved_paths, tmpdir):
                 job["events"].append({"type": "images", "payload": payload})
 
         image_gen.set_user_refs(saved_paths)      # pictures attached to this message become references for generate_image
+        if videos:                                # videos attached to this message: B.E.T.A. is told, and gets the watch tool
+            video_store.set_current(videos)
+            note = video_store.note_for(videos)
+            if note:
+                text = text + "\n\n" + note
         reply = agent.send(text, image_paths=saved_paths or None, on_tool_result=on_tool, on_images=on_images)
         if not job["cancelled"]:
             job["events"].append({"type": "reply", "text": reply or ""})
@@ -210,6 +216,7 @@ def _run_job(job, text, saved_paths, tmpdir):
         job["done"] = True
         CURRENT_JOB = None
         image_gen.clear_user_refs()
+        video_store.clear_current()
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
         try:
@@ -580,8 +587,11 @@ def send():
         paths, tmpdir = _save_attachments(body.get("files"))
     except ValueError as e:
         return jsonify(error=str(e)), 400
+    videos = [str(v) for v in (body.get("videos") or [])][:2]
+    if any(not video_store.known(v) for v in videos):
+        return jsonify(error="One of the videos is no longer stored. Attach it again."), 400
     job = _new_job()
-    threading.Thread(target=_run_job, args=(job, text, paths, tmpdir), daemon=True).start()
+    threading.Thread(target=_run_job, args=(job, text, paths, tmpdir, videos), daemon=True).start()
     return jsonify(job=job["id"])
 
 
@@ -688,6 +698,7 @@ def clear():
         agent.messages = [m for m in agent.messages if m.get("role") == "system"][:1]
         import agent_core
         agent_core.save_memory(agent.messages)
+    video_store.forget_all()
     return jsonify(ok=True)
 
 
@@ -784,12 +795,28 @@ def term_result():
 # Previews: the HTML B.E.T.A. draws for blueprints. Served in a locked box (see _security_headers).
 # ---------------------------------------------------------------------------
 
+# In the locked box, localStorage / sessionStorage / document.cookie THROW an error, and alert() / confirm() do nothing.
+# AI-written pages use them all the time, and one thrown error stops the page's whole script - which is why some previews
+# looked frozen. This tiny script, added in front of the page, gives them harmless in-memory stand-ins.
+PREVIEW_SHIM = (
+    "<script>(function(){function mk(){var m={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(m,k)?m[k]:null},"
+    "setItem:function(k,v){m[k]=String(v)},removeItem:function(k){delete m[k]},clear:function(){m={}},"
+    "key:function(i){return Object.keys(m)[i]||null},get length(){return Object.keys(m).length}}}"
+    "['localStorage','sessionStorage'].forEach(function(n){var ok=true;try{void window[n]}catch(e){ok=false}"
+    "if(!ok){try{Object.defineProperty(window,n,{value:mk(),configurable:true})}catch(e){}}});"
+    "try{void document.cookie}catch(e){try{Object.defineProperty(document,'cookie',{get:function(){return ''},set:function(){}})}catch(_){}}"
+    "['alert','confirm','prompt'].forEach(function(n){try{window[n]=function(){return n==='confirm'?true:null}}catch(e){}});})();</script>")
+
+
 @app.route("/api/preview/<fid>")
 def preview_page(fid):
     item = file_store.get(fid)
     if not item or not item["name"].lower().endswith(".html"):
         return Response("That preview is no longer stored. Ask B.E.T.A. to make it again.", status=404, mimetype="text/plain")
-    return Response(item["bytes"], mimetype="text/html")
+    page = item["bytes"].decode("utf-8", "replace")
+    m = re.search(r"<head[^>]*>", page, re.I)
+    page = (page[:m.end()] + PREVIEW_SHIM + page[m.end():]) if m else (PREVIEW_SHIM + page)
+    return Response(page, mimetype="text/html")
 
 
 # ---------------------------------------------------------------------------
@@ -831,6 +858,10 @@ def gemini_traffic():
     if not key:
         return jsonify(error="GEMINI_API_KEY isn't set on the server."), 503
     models = [ac.MODEL] + list(ac.FALLBACK_MODELS)
+    try:
+        models += [m for m in get_agent().extra_models if m not in models]
+    except Exception:
+        pass
     data = gemini_status.check(key, models, on_success=lambda m: ac.USAGE.record(m), force=request.args.get("force") == "1")
     return jsonify(data)
 
@@ -943,6 +974,43 @@ def _notify_new_mail(m):
 
 k10_bridge.on_new = _notify_new_mail
 k10_bridge.start_poller()                                # does nothing unless K-10 is set up
+
+
+# ---------------------------------------------------------------------------
+# Videos from your phone for B.E.T.A. to watch (see video_store.py)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/video", methods=["POST"])
+def video_upload():
+    """The clip itself is the request body (raw bytes); its name is in the X-Filename header."""
+    name = urllib.parse.unquote(request.headers.get("X-Filename", "video.mp4"))
+    try:
+        return jsonify(video_store.save(request.stream, name, request.content_length))
+    except video_store.VideoError as e:
+        return jsonify(error=str(e)), 400
+
+
+# ---------------------------------------------------------------------------
+# "What can B.E.T.A. do?" - which abilities are actually switched on right now
+# ---------------------------------------------------------------------------
+
+@app.route("/api/capabilities")
+def capabilities():
+    env = os.environ
+    extras = []
+    try:
+        extras = list(get_agent().extra_models)
+    except Exception:
+        pass
+    return jsonify(
+        images_search=bool(env.get("SERPER_API_KEY", "").strip()),
+        image_gen=bool((env.get("CLOUDFLARE_ACCOUNT_ID") and env.get("CLOUDFLARE_API_TOKEN")) or env.get("GEMINI_IMAGE_API_KEY")),
+        termux=term_bridge.enabled(), termux_connected=term_bridge.connected(),
+        k10=k10_bridge.enabled(),
+        alerts=_any_channel(), alerts_ntfy=_ntfy_ready(),
+        groq=bool(env.get("GROQ_API_KEY", "").strip()),
+        extra_models=extras,
+    )
 
 
 @app.route("/api/generated/<gid>")

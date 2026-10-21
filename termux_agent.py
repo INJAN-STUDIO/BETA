@@ -14,6 +14,15 @@ USE
   Start it when you want B.E.T.A. to be able to use Termux:      python ~/beta/termux_agent.py
   Stop it with Ctrl+C. While it is stopped, B.E.T.A. cannot run anything on your phone.
 
+KEEP IT AWAKE (important)
+  Android freezes apps that are in the background to save battery - including this script. Then an approved command just
+  waits until you open Termux again. To stop that:
+    * this script asks Termux to hold a "wake lock" while it runs (you will see "wake lock" in Termux's notification);
+    * Settings > Apps > Termux > Battery: choose "Unrestricted" / "Don't optimise" (on Honor phones: Battery > App launch >
+      Termux > manage manually, and turn on all three switches);
+    * in the recent-apps screen, lock Termux (the padlock on its card) so phone cleaners don't close it.
+  If Android does pause it anyway, the script says so ("paused for N seconds") the moment it wakes up.
+
 SAFETY
   * Nothing runs unless YOU tapped Run on that exact command in the B.E.T.A. chat.
   * Each approved command arrives signed by the server; anything unsigned, altered or old is refused here.
@@ -134,9 +143,23 @@ def handle(job):
             time.sleep(2)
 
 
+def wake_lock(on):
+    """Ask Termux to hold (or release) a wake lock so Android doesn't freeze this script in the background."""
+    cmd = "termux-wake-lock" if on else "termux-wake-unlock"
+    try:
+        subprocess.run([cmd], timeout=8, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if on:
+            print("Wake lock on - Android will keep this running while the screen is off.")
+    except Exception:
+        if on:
+            print("Couldn't set a wake lock automatically. Pull down Termux's notification and tap 'Acquire wakelock'.")
+
+
 def main():
     print("B.E.T.A. Termux bridge running - connected to %s\nPress Ctrl+C to stop.\n" % URL)
+    wake_lock(True)
     fails = 0
+    last_warned = 0.0
     while True:
         try:
             job = call("GET", "/api/term/next")
@@ -152,11 +175,18 @@ def main():
         if job.get("id"):
             handle(job)
             continue
-        time.sleep(max(1, min(60, int(job.get("poll_in", 6)))))
+        wait = max(1, min(60, int(job.get("poll_in", 6))))
+        t0 = time.time()
+        time.sleep(wait)
+        slept = time.time() - t0
+        if slept > wait + 20 and time.time() - last_warned > 300:     # we asked for a short nap and got a long one
+            last_warned = time.time()
+            print("Android paused this script for about %d seconds. Set Termux to 'Unrestricted' battery use (see the top of this file)." % int(slept))
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
+        wake_lock(False)
         print("\nStopped. B.E.T.A. can no longer run commands on this phone.")

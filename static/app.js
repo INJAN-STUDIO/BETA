@@ -39,6 +39,8 @@ const ICONS = {
   loader: '<path d="M21 12a9 9 0 11-6.2-8.56"/>',
   'play-fill': '<path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/>',
   'arrow-down': '<path d="M12 5v14M19 12l-7 7-7-7"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3M12 17h.01"/>',
+  video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
   lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>',
   unlock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 019.9-1"/>',
   mail: '<path d="M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z"/><polyline points="22,6 12,13 2,6"/>',
@@ -748,16 +750,39 @@ const store = {
 };
 let voiceOn = store.get('beta_voice') === '1';
 
-function speakable(text) {
-  return text
+function cleanForSpeech(text) {
+  return String(text || '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/^\s*\|.*\|\s*$/gm, ' ')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/[`*#>_]/g, '')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 900);
+    .trim();
+}
+const speakable = cleanForSpeech;                         // (the old version cut every reply off at 900 characters)
+
+// Cut the reply into pieces of whole sentences (about 450 characters each), so a long reply is read to the end and a
+// piece never stops mid-sentence. The next piece is fetched while the current one plays, so there is no gap.
+function speechChunks(text, max = 450) {
+  const clean = cleanForSpeech(text);
+  if (!clean) return [];
+  const sentences = clean.match(/.+?[.!?…]+(?=\s|$)["')\]]*\s*|.+$/g) || [clean];
+  const out = []; let cur = '';
+  const push = () => { if (cur.trim()) out.push(cur.trim()); cur = ''; };
+  for (let s of sentences) {
+    while (s.length > max) {                              // one very long sentence: cut at a comma or space
+      let cut = s.lastIndexOf(', ', max);
+      if (cut < max * 0.4) cut = s.lastIndexOf(' ', max);
+      if (cut < 1) cut = max;
+      if ((cur + s.slice(0, cut + 1)).length > max) push();
+      cur += s.slice(0, cut + 1); push(); s = s.slice(cut + 1);
+    }
+    if ((cur + s).length > max) push();
+    cur += s;
+  }
+  push();
+  return out;
 }
 // ---------------------------------------------------------------------------
 // Read aloud: the SERVER makes the speech with Microsoft Edge's neural voice (Brian) - the same engine
@@ -823,30 +848,46 @@ async function speak(text, btn) {
   setListenState(btn, 'loading');
   const ctrl = new AbortController();
   ttsAbort = ctrl;
-  try {
+  const chunks = speechChunks(text);
+  if (!chunks.length) { setListenState(btn, 'idle'); ttsBtn = null; return; }
+  const fetchChunk = async (t) => {
     const res = await fetch('/api/tts', {
       method: 'POST', credentials: 'same-origin', signal: ctrl.signal,
       headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'beta' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text: t }),
     });
     if (!res.ok) {
       let msg = "The voice isn't available right now.";
       try { msg = (await res.json()).error || msg; } catch (e) { /* not JSON */ }
       const err = new Error(msg); err.fromServer = true; throw err;
     }
-    const blob = await res.blob();
-    if (mine !== ttsToken) return;
-    if (ttsUrl) URL.revokeObjectURL(ttsUrl);
-    ttsUrl = URL.createObjectURL(blob);
-    ttsAudio.onended = () => { if (mine === ttsToken) { setListenState(btn, 'idle'); ttsBtn = null; } };
-    ttsAudio.src = ttsUrl;
-    await ttsAudio.play();
-    if (mine === ttsToken) setListenState(btn, 'playing');
+    return res.blob();
+  };
+  let started = false;
+  let next = fetchChunk(chunks[0]);
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      const blob = await next;
+      if (mine !== ttsToken) return;
+      next = i + 1 < chunks.length ? fetchChunk(chunks[i + 1]) : null;     // load the next piece while this one plays
+      if (next) next.catch(() => {});                                      // (an error is handled when it is awaited)
+      if (ttsUrl) URL.revokeObjectURL(ttsUrl);
+      ttsUrl = URL.createObjectURL(blob);
+      const ended = new Promise((resolve) => { ttsAudio.onended = resolve; ttsAudio.onerror = resolve; });
+      ttsAudio.src = ttsUrl;
+      await ttsAudio.play();
+      started = true;
+      if (mine === ttsToken) setListenState(btn, 'playing');
+      await ended;
+      if (mine !== ttsToken) return;
+    }
+    if (mine === ttsToken) { setListenState(btn, 'idle'); ttsBtn = null; }
   } catch (e) {
     if (e.name === 'AbortError' || mine !== ttsToken) return;
     setListenState(btn, 'idle'); ttsBtn = null;
-    const fallback = window.speechSynthesis ? speakable(text) : '';
-    if (fallback) {                                       // last resort: the phone's own voice
+    if (started) { toast('The voice stopped early - the connection dropped.', true); return; }
+    const fallback = window.speechSynthesis ? cleanForSpeech(text) : '';
+    if (fallback) {                                       // last resort: the phone's own voice (the whole reply)
       try { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(fallback)); toast("Using the phone's own voice"); return; } catch (err) { /* fall through */ }
     }
     toast(e.fromServer ? e.message : "Couldn't play the voice - check your connection", true);
@@ -904,10 +945,11 @@ $('input').addEventListener('beforeinput', (e) => {
   if ((e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') && !shiftDown) { e.preventDefault(); send(); }
 });
 
+let pendingVideos = [];     // {name, size, id, pct, xhr}
 function renderChips() {
   const row = $('attach-row');
   row.innerHTML = '';
-  row.classList.toggle('hidden', attachments.length === 0);
+  row.classList.toggle('hidden', attachments.length === 0 && pendingVideos.length === 0);
   attachments.forEach((a, i) => {
     const chip = document.createElement('span'); chip.className = 'chip';
     const n = document.createElement('span'); n.className = 'name'; n.textContent = a.name; chip.appendChild(n);
@@ -915,6 +957,37 @@ function renderChips() {
     x.addEventListener('click', () => { attachments.splice(i, 1); renderChips(); });
     chip.appendChild(x); row.appendChild(chip);
   });
+  pendingVideos.forEach((v) => {
+    const chip = document.createElement('span'); chip.className = 'chip vid';
+    const n = document.createElement('span'); n.className = 'name';
+    n.textContent = v.name + (v.id ? ' - ready' : ' - uploading ' + v.pct + '%'); chip.appendChild(n);
+    const x = document.createElement('button'); x.textContent = '×'; x.setAttribute('aria-label', 'Remove video');
+    x.addEventListener('click', () => { if (v.xhr && !v.id) { try { v.xhr.abort(); } catch (e) { /* ignore */ } } pendingVideos = pendingVideos.filter((q) => q !== v); renderChips(); });
+    chip.appendChild(x); row.appendChild(chip);
+  });
+}
+
+// A clip is sent to the server as it is (not shrunk), so it uses mobile data about equal to its size.
+const VIDEO_MAX = 25 * 1024 * 1024;
+const isVideoFile = (f) => (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|3gp|mkv|avi|mpe?g)$/i.test(f.name || '');
+function uploadVideo(file) {
+  if (pendingVideos.length >= 1) { toast('One video at a time', true); return; }
+  if (file.size > VIDEO_MAX) { toast(file.name + ' is over 25 MB - trim it to a shorter clip', true); return; }
+  const v = { name: file.name, size: file.size, id: null, pct: 0, xhr: null };
+  pendingVideos.push(v); renderChips();
+  const xhr = new XMLHttpRequest(); v.xhr = xhr;
+  xhr.open('POST', '/api/video');
+  xhr.setRequestHeader('X-Requested-With', 'beta');
+  xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
+  xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+  xhr.upload.onprogress = (e) => { if (e.lengthComputable) { v.pct = Math.round((e.loaded / e.total) * 100); renderChips(); } };
+  const fail = (msg) => { toast(msg, true); pendingVideos = pendingVideos.filter((q) => q !== v); renderChips(); };
+  xhr.onload = () => {
+    let j = {}; try { j = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+    if (xhr.status === 200 && j.id) { v.id = j.id; v.pct = 100; renderChips(); } else fail(j.error || 'The video upload failed.');
+  };
+  xhr.onerror = () => fail("Couldn't upload the video - check your connection.");
+  xhr.send(file);
 }
 
 // Phone photos are 3-6 MB; shrink to ~1280px JPEG first so uploads are quick on mobile data.
@@ -952,6 +1025,7 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
 $('attach-btn').addEventListener('click', () => $('file-input').click());
 $('file-input').addEventListener('change', async (e) => {
   for (const file of Array.from(e.target.files)) {
+    if (isVideoFile(file)) { uploadVideo(file); continue; }
     if (attachments.length >= 4) { toast('Up to 4 files at a time', true); break; }
     try {
       if (file.type.startsWith('image/')) attachments.push({ name: file.name.replace(/\.[^.]+$/, '') + '.jpg', data: await shrinkImage(file) });
@@ -976,9 +1050,11 @@ function setBusy(on) {
 
 async function send() {
   if (busy) return;
-  const text = $('input').value.trim();
+  if (pendingVideos.some((v) => !v.id)) { toast('Wait for the video to finish uploading', true); return; }
+  const text = $('input').value.trim() || (pendingVideos.length ? 'Please watch this video and tell me what happens in it.' : '');
   if (!text) return;
   const files = attachments.slice();
+  const videos = pendingVideos.map((v) => v.id);
   finishAllTyping();                                  // show any reply that's still typing, in full
   stopSpeaking();
   const bubble = addMessage('user', text);
@@ -987,13 +1063,18 @@ async function send() {
     note.textContent = files.map((f) => f.name).join(', ');
     bubble.appendChild(note);
   }
+  if (videos.length) {
+    const note = document.createElement('span'); note.className = 'attach-note';
+    note.textContent = '🎬 ' + pendingVideos.map((v) => v.name).join(', ');
+    bubble.appendChild(note);
+  }
   $('input').value = ''; autosize();
-  attachments = []; renderChips();
+  attachments = []; pendingVideos = []; renderChips();
   const sb = $('send-btn'); sb.classList.remove('pulse'); void sb.offsetWidth; sb.classList.add('pulse');
   setBusy(true);
   showThinking();
   try {
-    const { job } = await api('/api/send', { method: 'POST', body: { text, files } });
+    const { job } = await api('/api/send', { method: 'POST', body: { text, files, videos } });
     currentJob = job;
     sessionStorage.setItem('beta_job', job);
     await pollJob(job);
@@ -1307,7 +1388,15 @@ let replacedByNewerTab = false;
 (function injectMoreStyles() {
   const st = document.createElement('style');
   st.textContent = `
-    #menu .sheet { max-height: 86vh !important; overflow-y: auto !important; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+    #menu .menu-sheet { display: flex; flex-direction: column; max-height: 86vh; overflow: hidden; }
+    #menu .menu-scroll { overflow-y: auto; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+    #menu .menu-sheet .sheet-close { flex: none; margin-top: 8px; }
+    .wordmark { display: block; width: auto; margin: 0 auto; filter: drop-shadow(0 0 5px rgba(90,200,255,.40)); }
+    .wm-big { height: 38px; } .wm-small { height: 20px; margin: 0; }
+    .fc-btn.danger { background: rgba(231,76,60,.28); border-color: rgba(231,76,60,.85); }
+    .help-sec { font-weight: 700; margin: 14px 0 4px; } .help-it { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,.2); }
+    .help-st { font-size: .8em; opacity: .75; margin-left: 6px; } .help-try { opacity: .7; font-size: .88em; }
+    .chip.vid .name::before { content: '🎬 '; }
     .msg-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .btn-primary svg { width: 18px; height: 18px; vertical-align: -3px; margin-right: 6px; fill: none; stroke: currentColor; stroke-width: 1.8; }
     .cardlabel { font-size: .75em; letter-spacing: .05em; text-transform: uppercase; opacity: .65; margin-top: 10px; }
@@ -1427,13 +1516,16 @@ async function openModels() {
   if (!d) { body.textContent = "Couldn't load the models. Try again."; return; }
   body.textContent = '';
   const rows = [{ id: 'auto', title: 'Automatic (recommended)', sub: 'B.E.T.A. uses the best model that still has quota left and switches by itself.', on: !d.forced }];
+  let extraHeader = false;
   d.models.forEach((m) => {
     const isGroq = m.provider === 'groq';
+    if (m.extra && !extraHeader) { extraHeader = true; rows.push({ header: 'Smarter models - for coding and hard problems. Used only when you pick them.' }); }
     rows.push({ id: isGroq ? 'groq' : m.model, title: shortModel(m.model) + (isGroq ? ' (Groq backup)' : ''),
       sub: m.limit == null ? m.used + ' used today' : (m.remaining <= 0 ? 'used up for today' : m.remaining + ' of ' + m.limit + ' left today'),
       on: d.forced === (isGroq ? 'groq' : m.model) });
   });
   rows.forEach((r) => {
+    if (r.header) { body.appendChild(cardLabel(r.header)); return; }
     const b = document.createElement('button'); b.className = 'sheet-item mdl-row' + (r.on ? ' on' : '');
     const a = document.createElement('span'); a.textContent = r.title + (r.on ? '  ✓' : ''); b.appendChild(a);
     const c = document.createElement('span'); c.className = 'mdl-sub'; c.textContent = r.sub; b.appendChild(c);
@@ -1577,6 +1669,52 @@ $('k10-t-sent').addEventListener('click', () => k10Tab('sent'));
 $('k10-t-compose').addEventListener('click', () => k10Tab('compose'));
 $('k10-close').addEventListener('click', () => { hide('k10'); refreshK10Menu(); });
 
+// ---- what can B.E.T.A. do? (shows what is switched on right now)
+async function openHelp() {
+  const body = $('help-body'); body.textContent = 'Loading…'; show('help');
+  let c = {};
+  try { c = await api('/api/capabilities'); } catch (e) { /* show the list without live status */ }
+  const tag = (on) => on === undefined ? '' : (on ? '● on' : '○ not set up');
+  const groups = [
+    ['Talk and think', [
+      ['Answers questions, explains things simply, and writes or fixes code', 'Try: "explain how DNS works like I\'m new"'],
+      ['Remembers: the last 60 messages, plus long-term memory for things worth keeping', 'Try: "remember that my laptop is a Dell E5440"'],
+      ['Reads aloud (Listen button) and copies a whole reply (Copy button)', null]]],
+    ['Look things up', [
+      ['Searches the web, checks several sources and says when they disagree', 'Try: "what\'s new in Fedora?"'],
+      ['Finds and shows photos', 'Try: "show me photos of Lagos at night"', c.images_search],
+      ['Plays YouTube videos in the chat, or watches one and tells you what is in it', 'Try: "what does this video say? <link>"']]],
+    ['Make things', [
+      ['Draws pictures (name a character, or attach a reference picture)', 'Try: "draw Itachi under a red moon"', c.image_gen],
+      ['Makes files you can download: code, notes, Word documents', 'Try: "write me a backup script"'],
+      ['Shows live, tappable previews of app designs', 'Try: "show me a login screen blueprint"']]],
+    ['Look at your stuff', [
+      ['Reads pictures, text/code files and Word documents you attach (paperclip)', null],
+      ['Watches a video from your phone (up to 25 MB; it uses mobile data to upload)', 'Try: attach a clip and ask "summarise this"']]],
+    ['Your phone and ALPHA', [
+      ['Runs commands in Termux, only after you tap Accept', 'Try: "how much storage is left?"', c.termux ? (c.termux_connected ? true : false) : false],
+      ['K-10 mail: private, encrypted messages to ALPHA that you read and approve', 'Try: "send ALPHA my notes"', c.k10]]],
+    ['Control', [
+      ['Choose the model by hand, including smarter ones for coding', null],
+      ['Gemini traffic: a live check of whether Google\'s servers are busy', null],
+      ['Alerts when a reply is ready while you are away', null, c.alerts],
+      ['Themes, text size, install as an app, clear the chat, lock the app', null]]],
+  ];
+  body.textContent = '';
+  groups.forEach(([title, items]) => {
+    const h = document.createElement('div'); h.className = 'help-sec'; h.textContent = title; body.appendChild(h);
+    items.forEach(([what, example, on]) => {
+      const d = document.createElement('div'); d.className = 'help-it';
+      const t = document.createElement('span'); t.textContent = what; d.appendChild(t);
+      const st = tag(on); if (st) { const s2 = document.createElement('span'); s2.className = 'help-st'; s2.textContent = st; d.appendChild(s2); }
+      if (example) { const e = document.createElement('div'); e.className = 'help-try'; e.textContent = example; d.appendChild(e); }
+      body.appendChild(d);
+    });
+  });
+}
+$('m-help').addEventListener('click', () => { hide('menu'); openHelp(); });
+$('help-close').addEventListener('click', () => hide('help'));
+
 // ---- "are you looking at B.E.T.A.?" - told to the server the moment it changes, so alerts fire reliably
 let lastPresence = null;
 function isAway() { return document.hidden || !document.hasFocus(); }
@@ -1672,8 +1810,21 @@ $('m-notify').addEventListener('click', async () => {
   refreshNotifyMenu();
 });
 
+function askConfirm(title, text, yesLabel) {
+  return new Promise((resolve) => {
+    $('confirm-title').textContent = title;
+    $('confirm-text').textContent = text;
+    $('confirm-yes').textContent = yesLabel || 'Yes';
+    const done = (v) => { hide('confirm'); $('confirm-yes').onclick = null; $('confirm-no').onclick = null; resolve(v); };
+    $('confirm-yes').onclick = () => done(true);
+    $('confirm-no').onclick = () => done(false);
+    show('confirm');
+  });
+}
 $('m-clear').addEventListener('click', async () => {
-  if (!confirm('Clear this conversation? Long-term memory is kept.')) return;
+  const ok = await askConfirm('Clear this conversation?',
+    "This deletes the whole chat from this phone and from the server, and it can't be undone. Your long-term memory is kept.", 'Yes, clear it');
+  if (!ok) return;
   try { await api('/api/clear', { method: 'POST' }); chat.innerHTML = ''; hide('menu'); toast('Conversation cleared'); }
   catch (e) { toast(e.message, true); }
 });

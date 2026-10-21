@@ -25,12 +25,14 @@ import k10_bridge
 import storage
 import term_bridge
 import threading
+import video_store
 import time
 from datetime import datetime, timedelta, timezone
 from usage_tracker import UsageTracker
 
 CLOUD_TOOLS = {
     "web_search",
+    "watch_attached_video",   # Gemini watches a video Karachi attached from his phone (see video_store.py)
     "show_preview",        # HTML/SVG mockups shown in a sandboxed frame in the chat (see BetaAgent._show_preview)
     "write_file",          # in B.E.T.A. this CREATES A DOWNLOADABLE FILE (see BetaAgent._write_file) - it never touches the server's disk
     "search_images",
@@ -62,10 +64,17 @@ card, so don't paste the whole file again - say in one line what it is. Text and
 for .docx, lines starting with # become headings and lines starting with "- " become bullets. Files are only kept for a
 little while, so tell him to download it.
 
-Previews: when Karachi asks to see a design, mockup, layout or blueprint, use show_preview with ONE complete HTML document
-(inline CSS, optional small inline script, no external files - it runs in a locked box with no internet). Make it look
-good on a phone screen (about 360px wide), then say in one line what it shows and ask what to change. He can talk the
+Previews: when Karachi asks to see a design, mockup, layout or blueprint, use show_preview with ONE complete HTML document.
+Make it a working little app, not a picture: buttons and tabs that really switch screens, toggles, counters, hover and
+press effects, smooth CSS transitions and animations, small inline JavaScript that changes the screen. It runs in a locked
+box with no internet: keep state in plain JavaScript variables, and never use localStorage, sessionStorage, cookies,
+alert/confirm/prompt, fetch, form submits or external files (use inline SVG, CSS and emoji). Make it look good on a phone
+screen (about 360px wide), then say in one line what it shows and what he can tap, and ask what to change. He can talk the
 blueprint over with ALPHA afterwards.
+
+Videos: when his message says a video is attached, use watch_attached_video to look at it (Gemini watches it, sound
+included) and answer from what comes back - you cannot see it any other way. Never pretend to have watched a video you
+did not.
 
 K-10 mail (only if k10_send is available): K-10 is the private mail line to ALPHA, his desktop assistant. Use k10_send to
 draft a message when he asks you to pass something to ALPHA. He reads the exact message on a card and must tap Accept
@@ -158,6 +167,14 @@ def _load_memory():
     return [{"role": "system", "content": ac.SYSTEM_PROMPT}]
 
 
+def _extra_model_names():
+    """Smarter models offered only in the menu's Model picker - never chosen automatically (they cost more and have small
+    free allowances). Change them with GEMINI_EXTRA_MODELS, e.g. "gemini-3.6-flash,gemini-3.8-flash"."""
+    raw = os.environ.get("GEMINI_EXTRA_MODELS")
+    raw = "gemini-3.6-flash,gemini-3.8-flash" if raw is None else raw
+    return [m.strip() for m in raw.split(",") if m.strip()]
+
+
 def _today_note():
     """Today's date and time for the model. Without this it has no idea what day it is and falls back on the year it was
     trained in - which is why web searches were being compared against 2025. Nigeria time (UTC+1) unless BETA_UTC_OFFSET_HOURS says otherwise."""
@@ -241,11 +258,25 @@ class BetaAgent(ac.Agent):
                         "required": ["command", "explanation"]}}}
             tools.append(t)
         tools.append({"type": "function", "function": {
+            "name": "watch_attached_video",
+            "description": ("Watch a video Karachi attached to his message (a clip from his phone) and answer a question about it. "
+                            "Gemini watches it, including the sound, and returns what happens with timestamps. Use it whenever his "
+                            "message says a video is attached; ask follow-up questions with the same video_id."),
+            "parameters": {"type": "object", "properties": {
+                "question": {"type": "string", "description": "What to find out, e.g. 'summarise it' or 'what is said at the end?'"},
+                "video_id": {"type": "string", "description": "The video_id from the attachment note (optional if only one)"}},
+                "required": ["question"]}}})
+        tools.append({"type": "function", "function": {
             "name": "show_preview",
-            "description": ("Show Karachi a visual PREVIEW in the chat: a UI mockup, layout blueprint, diagram or small interactive "
-                            "sketch, drawn as one complete HTML document with inline CSS (inline <script> is allowed for small "
-                            "interactions). It runs in a locked box with NO internet, so don't use external images, fonts or "
-                            "scripts - use inline SVG, CSS and emoji. Design for a phone screen about 360px wide unless he says otherwise."),
+            "description": ("Show Karachi a live PREVIEW in the chat: a UI mockup or blueprint that WORKS like a small app, as one complete "
+                            "HTML document with inline CSS and inline <script>. Make it interactive and alive: buttons and tabs that "
+                            "actually switch screens, toggles, forms made of buttons, counters, hover/press effects, smooth CSS "
+                            "transitions and animations, small JavaScript that changes what is on screen. It runs in a locked box with "
+                            "NO internet and several browser features switched off, so: keep all state in plain JavaScript variables; "
+                            "do NOT use localStorage, sessionStorage, cookies, alert/confirm/prompt, fetch/XMLHttpRequest, <form> "
+                            "submits, or links to other pages; use inline SVG, CSS and emoji instead of external images, fonts or "
+                            "scripts. Design for a phone screen about 360px wide unless he says otherwise. A static picture of a UI is a "
+                            "poor preview - make the controls respond."),
             "parameters": {"type": "object", "properties": {
                 "title": {"type": "string", "description": "Short title, e.g. 'Login screen blueprint'"},
                 "html": {"type": "string", "description": "The complete HTML document"},
@@ -266,7 +297,8 @@ class BetaAgent(ac.Agent):
         return tools
 
     def _extra_tools(self):
-        return {"show_preview": self._show_preview, "k10_send": self._k10_send}
+        return {"show_preview": self._show_preview, "k10_send": self._k10_send,
+                "watch_attached_video": self._watch_attached_video}
 
     @staticmethod
     def _describe_tool_call(func_name, args):
@@ -274,9 +306,18 @@ class BetaAgent(ac.Agent):
             return "Preparing a preview — %s" % args.get("title", "")
         if func_name == "k10_send":
             return "Drafting K-10 mail for ALPHA"
+        if func_name == "watch_attached_video":
+            return "Watching your video (this can take a little while)"
         return ac.Agent._describe_tool_call(func_name, args)
 
     def _show_preview(self, title, html, explanation=""):
+        low = str(html or "").lower()
+        if not (("<script" in low) or (":checked" in low) or ("<details" in low)) and not self._preview_nudged:
+            self._preview_nudged = True      # a static picture is turned back once; a second try is always shown
+            return ("NOT SHOWN YET: this preview has no interactivity at all. Karachi wants previews that move and respond. "
+                    "Rewrite it with working controls (buttons/tabs that change the screen using inline JavaScript, state kept in "
+                    "plain variables, plus CSS transitions or animations) and call show_preview again.")
+        self._preview_nudged = False
         try:
             info = file_store.create("%s.html" % (str(title or "preview")[:60]), html, max_bytes=300_000)
         except file_store.FileError as e:
@@ -285,11 +326,33 @@ class BetaAgent(ac.Agent):
         return ("Showed Karachi a preview called '%s' in the chat (it can also be downloaded as .html). Say in one short line "
                 "what it shows and ask what to change." % title)
 
+    def _watch_attached_video(self, question, video_id=""):
+        model = self.forced if (self.forced and self.forced != "groq") else ac.MODEL
+        try:
+            text = video_store.analyze(question, video_id or None, self._api_key, model)
+        except video_store.VideoError as e:
+            return "Couldn't watch the video: %s" % e
+        if text is None:
+            return "No video is attached to this message. Ask Karachi to attach one with the paperclip."
+        try:
+            ac.USAGE.record(model)
+        except Exception:
+            pass
+        return ("What the video shows (Gemini watched it, with sound; timestamps are mm:ss):\n" + text +
+                "\n(Explain this to Karachi in your own words, simply. For follow-up questions about the same video, call "
+                "watch_attached_video again.)")
+
     def _k10_send(self, subject, body, explanation="", attachment_name="", attachment_text=""):
         return k10_bridge.request_send("alpha", subject, body, attachment_name, attachment_text, explanation, self._emit_card)
 
     # ---- choosing the model by hand (menu > Model) ----
     forced = None            # None = automatic, "groq", or the name of one Gemini model
+    _preview_nudged = False
+
+    @property
+    def extra_models(self):
+        chain = [ac.MODEL] + list(ac.FALLBACK_MODELS)
+        return [m for m in _extra_model_names() if m not in chain]
 
     def set_forced(self, choice):
         """choice: 'auto', 'groq', or one of the Gemini models in the chain. Returns an error text or None."""
@@ -303,7 +366,7 @@ class BetaAgent(ac.Agent):
             if not self.groq_client:
                 return "Groq isn't switched on (no GROQ_API_KEY on the server)."
             self.forced, self.active_provider, self._switch_reason = "groq", "groq", "manual"
-        elif choice in chain:
+        elif choice in chain or choice in self.extra_models:
             self.forced, self.active_provider = choice, "gemini"
             if self._switch_reason == "manual":
                 self._switch_reason = None
@@ -330,6 +393,23 @@ class BetaAgent(ac.Agent):
 
     def usage_snapshot(self):
         snap = super().usage_snapshot()
+        chain = [ac.MODEL] + list(ac.FALLBACK_MODELS)
+        for m, e in zip(chain, [x for x in snap["models"] if x.get("provider") != "groq"]):
+            e.setdefault("model", m)                       # the model picker needs every row to carry its name
+        for e in snap["models"]:
+            if e.get("provider") == "groq":
+                e.setdefault("model", ac.GROQ_MODEL)
+        extras = []
+        for m in self.extra_models:
+            try:
+                e = dict(ac.USAGE.entry(m), provider="gemini")
+            except Exception:
+                e = {"limit": None, "used": 0, "provider": "gemini"}
+            e.setdefault("model", m)
+            e["extra"] = True
+            extras.append(e)
+        snap["models"] = ([x for x in snap["models"] if x.get("provider") != "groq"] + extras +
+                          [x for x in snap["models"] if x.get("provider") == "groq"])
         snap["forced"] = self.forced
         if self.forced == "groq" and self.groq_client:
             snap["provider"], snap["active"] = "groq", ac.GROQ_MODEL
