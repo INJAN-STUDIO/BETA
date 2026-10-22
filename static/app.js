@@ -39,6 +39,7 @@ const ICONS = {
   loader: '<path d="M21 12a9 9 0 11-6.2-8.56"/>',
   'play-fill': '<path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/>',
   'arrow-down': '<path d="M12 5v14M19 12l-7 7-7-7"/>',
+  clipboard: '<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>',
   help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3M12 17h.01"/>',
   video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
   lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>',
@@ -459,7 +460,19 @@ function addMessage(role, text, animate) {
   const el = document.createElement('div');
   el.className = 'msg ' + (role === 'user' ? 'user' : role === 'error' ? 'ai error' : 'ai');
   let typing = null;
-  if (role === 'user') el.textContent = text;
+  if (role === 'user') {
+    el.textContent = text;
+    const row = document.createElement('div'); row.className = 'user-actions';
+    const cp = document.createElement('button'); cp.className = 'user-copy';
+    cp.setAttribute('aria-label', 'Copy your message'); cp.innerHTML = iconSvg('clipboard');
+    cp.addEventListener('click', async () => {
+      const ok = await copyText(text);
+      cp.innerHTML = iconSvg(ok ? 'check' : 'clipboard');
+      setTimeout(() => { cp.innerHTML = iconSvg('clipboard'); }, 1600);
+      if (!ok) toast("Couldn't copy - your browser blocked it", true);
+    });
+    row.appendChild(cp); el.appendChild(row);
+  }
   else if (role === 'error') el.textContent = text;
   else {
     const rich = renderRich(text);
@@ -968,11 +981,22 @@ function renderChips() {
 }
 
 // A clip is sent to the server as it is (not shrunk), so it uses mobile data about equal to its size.
-const VIDEO_MAX = 25 * 1024 * 1024;
+let videoMaxBytes = null;
+async function loadVideoLimit() {
+  if (videoMaxBytes) return videoMaxBytes;
+  try { videoMaxBytes = ((await api('/api/capabilities')).video_max_mb || 25) * 1048576; } catch (e) { videoMaxBytes = 25 * 1048576; }
+  return videoMaxBytes;
+}
 const isVideoFile = (f) => (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|3gp|mkv|avi|mpe?g)$/i.test(f.name || '');
-function uploadVideo(file) {
+async function uploadVideo(file) {
   if (pendingVideos.length >= 1) { toast('One video at a time', true); return; }
-  if (file.size > VIDEO_MAX) { toast(file.name + ' is over 25 MB - trim it to a shorter clip', true); return; }
+  const max = await loadVideoLimit();
+  if (file.size > max) { toast(file.name + ' is over ' + Math.round(max / 1048576) + ' MB - trim it to a shorter clip', true); return; }
+  if (file.size > 20 * 1048576) {                          // a big clip uses that much mobile data, so ask first
+    const ok = await askConfirm('Upload this video?', 'It is ' + (file.size / 1048576).toFixed(0) + ' MB, which uses about that much mobile data and may take a while.', 'Upload');
+    if (!ok) return;
+  }
+  if (pendingVideos.length >= 1) return;
   const v = { name: file.name, size: file.size, id: null, pct: 0, xhr: null };
   pendingVideos.push(v); renderChips();
   const xhr = new XMLHttpRequest(); v.xhr = xhr;
@@ -1025,7 +1049,7 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
 $('attach-btn').addEventListener('click', () => $('file-input').click());
 $('file-input').addEventListener('change', async (e) => {
   for (const file of Array.from(e.target.files)) {
-    if (isVideoFile(file)) { uploadVideo(file); continue; }
+    if (isVideoFile(file)) { await uploadVideo(file); continue; }
     if (attachments.length >= 4) { toast('Up to 4 files at a time', true); break; }
     try {
       if (file.type.startsWith('image/')) attachments.push({ name: file.name.replace(/\.[^.]+$/, '') + '.jpg', data: await shrinkImage(file) });
@@ -1068,6 +1092,7 @@ async function send() {
     note.textContent = '🎬 ' + pendingVideos.map((v) => v.name).join(', ');
     bubble.appendChild(note);
   }
+  { const ua = bubble.querySelector && bubble.querySelector('.user-actions'); if (ua) bubble.appendChild(ua); }     // copy icon stays last
   $('input').value = ''; autosize();
   attachments = []; pendingVideos = []; renderChips();
   const sb = $('send-btn'); sb.classList.remove('pulse'); void sb.offsetWidth; sb.classList.add('pulse');
@@ -1397,6 +1422,10 @@ let replacedByNewerTab = false;
     .help-sec { font-weight: 700; margin: 14px 0 4px; } .help-it { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,.2); }
     .help-st { font-size: .8em; opacity: .75; margin-left: 6px; } .help-try { opacity: .7; font-size: .88em; }
     .chip.vid .name::before { content: '🎬 '; }
+    .user-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+    .user-copy { background: none; border: 0; color: inherit; opacity: .55; padding: 2px 4px; cursor: pointer; line-height: 0; }
+    .user-copy:active { opacity: 1; }
+    .user-copy svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; }
     .msg-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .btn-primary svg { width: 18px; height: 18px; vertical-align: -3px; margin-right: 6px; fill: none; stroke: currentColor; stroke-width: 1.8; }
     .cardlabel { font-size: .75em; letter-spacing: .05em; text-transform: uppercase; opacity: .65; margin-top: 10px; }
@@ -1690,7 +1719,7 @@ async function openHelp() {
       ['Shows live, tappable previews of app designs', 'Try: "show me a login screen blueprint"']]],
     ['Look at your stuff', [
       ['Reads pictures, text/code files and Word documents you attach (paperclip)', null],
-      ['Watches a video from your phone (up to 25 MB; it uses mobile data to upload)', 'Try: attach a clip and ask "summarise this"']]],
+      ['Watches a video from your phone (up to ' + (c.video_max_mb || 25) + ' MB; it uses mobile data to upload)', 'Try: attach a clip and ask "summarise this"']]],
     ['Your phone and ALPHA', [
       ['Runs commands in Termux, only after you tap Accept', 'Try: "how much storage is left?"', c.termux ? (c.termux_connected ? true : false) : false],
       ['K-10 mail: private, encrypted messages to ALPHA that you read and approve', 'Try: "send ALPHA my notes"', c.k10]]],

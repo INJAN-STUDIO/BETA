@@ -63,11 +63,12 @@ _SAFETY_REASONS = {"IMAGE_SAFETY", "PROHIBITED_CONTENT", "SAFETY", "IMAGE_PROHIB
 
 
 class ImageGenError(Exception):
-    """Carries a message that is safe and clear enough to show the user."""
+    """Carries a message that is safe and clear enough to show the user. safety=True means the provider's content filter said no."""
 
-    def __init__(self, user_message):
+    def __init__(self, user_message, safety=False):
         super().__init__(user_message)
         self.user_message = user_message
+        self.safety = safety
 
 
 def _error_message(code, body_text, model):
@@ -266,6 +267,15 @@ def _flux2_size(aspect):
     return clamp(a * scale), clamp(b * scale)
 
 
+_SAFETY_WORDS = ("nsfw", "flagged", "inappropriate", "safety", "moderation")
+
+
+def _flux2_fail(code, msg):
+    """Log Cloudflare's own words (the friendly message hides them) and raise."""
+    print("[B.E.T.A.] Cloudflare FLUX.2 error (HTTP %s): %s" % (code, str(msg)[:300]))
+    raise ImageGenError(_cf_error_message(code, msg), safety=any(w in str(msg).lower() for w in _SAFETY_WORDS))
+
+
 def _flux2_request(url, token, fields, files, timeout):
     """One multipart call to a FLUX.2 model. Returns the decoded result dict or raises ImageGenError."""
     body, ctype = _multipart(fields, files)
@@ -281,14 +291,14 @@ def _flux2_request(url, token, fields, files, timeout):
             msg = " ".join("%s %s" % (x.get("code", ""), x.get("message", "")) for x in errs).strip() or raw_err
         except Exception:
             msg = ""
-        raise ImageGenError(_cf_error_message(e.code, msg))
+        _flux2_fail(e.code, msg)
     except (urllib.error.URLError, TimeoutError, OSError):
         raise ImageGenError("Couldn't reach Cloudflare's image service (network problem or it took too long). Try again.")
     except ValueError:
         raise ImageGenError("Cloudflare sent back something unreadable. Try again.")
     if not data.get("success", True):
         errs = data.get("errors") or [{}]
-        raise ImageGenError(_cf_error_message(400, " ".join("%s %s" % (x.get("code", ""), x.get("message", "")) for x in errs)))
+        _flux2_fail(400, " ".join("%s %s" % (x.get("code", ""), x.get("message", "")) for x in errs))
     return data
 
 
@@ -468,7 +478,24 @@ def generate_any(prompt, aspect, env, chat_key):
                                                          model=ref_model)
                         return imgs, CF_REF_LABEL, "cloudflare-" + ref_model.split("/")[-1]
                     except ImageGenError as e:
-                        print("[B.E.T.A.] FLUX.2 with reference pictures failed, using schnell instead: %s" % e.user_message)
+                        print("[B.E.T.A.] FLUX.2 with reference pictures failed: %s" % e.user_message)
+                        # The safety filter reviews the reference pictures too, and pictures from the web can trip it. If it
+                        # said no to the set, try each reference on its own and keep the first one it accepts.
+                        refs_all = refined["refs"]
+                        if e.safety and len(refs_all) > 1:
+                            print("[B.E.T.A.] trying the reference pictures one at a time")
+                            single_prompt = (refined["prompt"] + " Use the attached reference picture as the visual reference - "
+                                             "stay faithful to what it shows except where the request asks for a change.")[:1900]
+                            for idx, one in enumerate(refs_all[:4]):
+                                try:
+                                    imgs = generate_cloudflare_flux2(env["CLOUDFLARE_ACCOUNT_ID"].strip(), env["CLOUDFLARE_API_TOKEN"].strip(),
+                                                                     single_prompt, [one], aspect=aspect, steps=steps2, model=ref_model)
+                                    print("[B.E.T.A.] FLUX.2 accepted reference picture #%d on its own" % idx)
+                                    return imgs, CF_REF_LABEL + " (one reference)", "cloudflare-" + ref_model.split("/")[-1]
+                                except ImageGenError as e2:
+                                    if not e2.safety:
+                                        break
+                        print("[B.E.T.A.] using schnell instead")
                 # 2) text-only FLUX schnell. Characters get a few more steps (more detail) - costs more of the daily free allowance
                 try:
                     steps = int(env.get("CF_IMAGE_STEPS") or (6 if refined["characters"] else 4))

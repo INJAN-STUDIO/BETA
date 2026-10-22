@@ -20,7 +20,17 @@ import threading
 import time
 import uuid
 
-MAX_BYTES = 25 * 1024 * 1024
+def _limit_bytes():
+    """The biggest clip accepted. Google's Files API takes up to 2 GB per file, so the real limits are this small free server
+    (it must receive the clip before sending it on) and your mobile data. Default 100 MB; set VIDEO_MAX_MB on Render (5-400)."""
+    try:
+        mb = int(os.environ.get("VIDEO_MAX_MB", "100"))
+    except ValueError:
+        mb = 100
+    return max(5, min(400, mb)) * 1024 * 1024
+
+
+MAX_BYTES = _limit_bytes()
 KEEP_LOCAL_SECONDS = 1800
 KEEP_REMOTE_SECONDS = 3600
 EXTENSIONS = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm", ".3gp": "video/3gpp",
@@ -161,7 +171,7 @@ def note_for(ids):
 # Watching (Gemini)
 # ---------------------------------------------------------------------------
 
-def _wait_active(client, f, timeout=150):
+def _wait_active(client, f, timeout=300):
     end = time.time() + timeout
     while time.time() < end:
         state = str(getattr(getattr(f, "state", None), "name", getattr(f, "state", "")) or "")

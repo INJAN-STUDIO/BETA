@@ -52,13 +52,13 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 app = Flask(__name__, static_folder=None)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)   # Render sits behind a proxy: real client IP + https
-app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024      # room for a 25 MB video clip; other uploads are capped separately below
+app.config["MAX_CONTENT_LENGTH"] = max(32 * 1024 * 1024, video_store.MAX_BYTES + 2 * 1024 * 1024)      # room for the biggest video clip; picture/file attachments are capped separately below
 
 # THE release number - the only place you change it. Use plain numbers: 1.1 for a small fix or tweak, 2.0 for a
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "2.6"
+APP_VERSION = "2.7"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -1010,6 +1010,7 @@ def capabilities():
         alerts=_any_channel(), alerts_ntfy=_ntfy_ready(),
         groq=bool(env.get("GROQ_API_KEY", "").strip()),
         extra_models=extras,
+        video_max_mb=video_store.MAX_BYTES // 1048576,
     )
 
 
