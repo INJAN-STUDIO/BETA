@@ -71,6 +71,7 @@
       <div class="composer-row">
         <div class="composer-left">
           <button id="attach-btn" class="icon-btn" aria-label="Attach" data-icon="clip"></button>
+          <button id="paste-btn" class="icon-btn" aria-label="Paste from clipboard" data-icon="clipboard"></button>
           <button id="mic-btn" class="icon-btn hidden" aria-label="Speak" data-icon="mic"></button>
         </div>
         <button id="send-btn" class="send-btn" aria-label="Send" data-icon="send"></button>
@@ -111,6 +112,27 @@
     <div class="sheet-title">What B.E.T.A. can do</div>
     <div id="help-body" class="sheet-scroll"></div>
     <button class="sheet-close" id="help-close">Close</button>
+  </div>
+</div>
+
+<!-- Pick a theme -->
+<div id="themes" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Theme</div>
+    <div id="themes-body" class="sheet-scroll"></div>
+    <button class="sheet-close" id="themes-close">Close</button>
+  </div>
+</div>
+
+<!-- Pasted text, in full -->
+<div id="pasteview" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Pasted text</div>
+    <div id="pasteview-body" class="sheet-scroll k10-text" style="max-height:none"></div>
+    <div class="tc-actions" style="margin:10px 0 4px">
+      <button class="fc-btn danger" id="pasteview-remove">Remove it</button>
+      <button class="fc-btn primary" id="pasteview-close">Close</button>
+    </div>
   </div>
 </div>
 

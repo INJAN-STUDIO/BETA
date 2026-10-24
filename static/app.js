@@ -965,7 +965,12 @@ function renderChips() {
   row.classList.toggle('hidden', attachments.length === 0 && pendingVideos.length === 0);
   attachments.forEach((a, i) => {
     const chip = document.createElement('span'); chip.className = 'chip';
-    const n = document.createElement('span'); n.className = 'name'; n.textContent = a.name; chip.appendChild(n);
+    const n = document.createElement('span'); n.className = 'name'; n.textContent = a.name;
+    if (a.pasted) {
+      n.textContent = '📋 Pasted text · ' + a.pasted.length.toLocaleString() + ' characters';
+      n.style.cursor = 'pointer'; n.addEventListener('click', () => openPasteView(a));
+    }
+    chip.appendChild(n);
     const x = document.createElement('button'); x.textContent = '×'; x.setAttribute('aria-label', 'Remove');
     x.addEventListener('click', () => { attachments.splice(i, 1); renderChips(); });
     chip.appendChild(x); row.appendChild(chip);
@@ -1075,9 +1080,10 @@ function setBusy(on) {
 async function send() {
   if (busy) return;
   if (pendingVideos.some((v) => !v.id)) { toast('Wait for the video to finish uploading', true); return; }
-  const text = $('input').value.trim() || (pendingVideos.length ? 'Please watch this video and tell me what happens in it.' : '');
+  let text = $('input').value.trim() || (pendingVideos.length ? 'Please watch this video and tell me what happens in it.' : '');
+  if (!text && attachments.length) text = 'Please look at what I attached.';
   if (!text) return;
-  const files = attachments.slice();
+  const files = attachments.map(({ name, data }) => ({ name, data }));
   const videos = pendingVideos.map((v) => v.id);
   finishAllTyping();                                  // show any reply that's still typing, in full
   stopSpeaking();
@@ -1188,10 +1194,19 @@ applyTextSize();
 
 // ---- theme: logo colours (dark / light) or classic (ALPHA's original dark / light) ----
 const THEMES = [
-  { id: 'icon-dark', name: 'Logo colours · Dark', bar: '#051a22', icon: 'palette' },
-  { id: 'icon-light', name: 'Logo colours · Light', bar: '#e8f5f8', icon: 'palette' },
-  { id: 'dark', name: 'Classic dark (ALPHA)', bar: '#05060a', icon: 'moon' },
-  { id: 'light', name: 'Classic light', bar: '#f2f6fb', icon: 'sun' },
+  { id: 'icon-dark', name: 'Logo colours · Dark', bar: '#051a22', icon: 'palette', kind: 'dark', sw: ["#051a22", "#35b6d5", "#7fe3ee"] },
+  { id: 'icon-light', name: 'Logo colours · Light', bar: '#e8f5f8', icon: 'palette', kind: 'light', sw: ["#e8f5f8", "#0e6e9e", "#0b6a96"] },
+  { id: 'dark', name: 'Classic dark (ALPHA)', bar: '#05060a', icon: 'moon', kind: 'dark', sw: ["#05060a", "#2ab0ff", "#6fd2ff"] },
+  { id: 'light', name: 'Classic light', bar: '#f2f6fb', icon: 'sun', kind: 'light', sw: ["#f2f6fb", "#1469c8", "#0a66bd"] },
+  { id: 'midnight', name: 'Midnight purple · Dark', bar: '#0b0720', icon: 'palette', kind: 'dark', sw: ["#0b0720", "#8b5cf6", "#c4b5fd"] },
+  { id: 'forest', name: 'Forest green · Dark', bar: '#04140d', icon: 'palette', kind: 'dark', sw: ["#04140d", "#2fbf71", "#86efac"] },
+  { id: 'sunset', name: 'Sunset amber · Dark', bar: '#190c05', icon: 'palette', kind: 'dark', sw: ["#190c05", "#ff8a3d", "#ffc27a"] },
+  { id: 'rose', name: 'Rose · Dark', bar: '#1a0711', icon: 'palette', kind: 'dark', sw: ["#1a0711", "#ec4899", "#f9a8d4"] },
+  { id: 'ocean', name: 'Ocean blue · Dark', bar: '#04122b', icon: 'palette', kind: 'dark', sw: ["#04122b", "#3b82f6", "#93c5fd"] },
+  { id: 'amoled', name: 'True black · AMOLED', bar: '#000000', icon: 'palette', kind: 'dark', sw: ["#000000", "#4dd0e1", "#a5f3fc"] },
+  { id: 'paper', name: 'Paper · Warm light', bar: '#f6f1e7', icon: 'palette', kind: 'light', sw: ["#f6f1e7", "#b45309", "#92400e"] },
+  { id: 'mint', name: 'Mint · Light', bar: '#e9f7ef', icon: 'palette', kind: 'light', sw: ["#e9f7ef", "#0f8f55", "#0b7344"] },
+  { id: 'lavender', name: 'Lavender · Light', bar: '#f1ecfb', icon: 'palette', kind: 'light', sw: ["#f1ecfb", "#7c3aed", "#6d28d9"] },
 ];
 let themeIdx = Math.max(0, THEMES.findIndex((t) => t.id === store.get('beta_theme')));   // default: logo colours, dark
 function applyTheme() {
@@ -1201,13 +1216,33 @@ function applyTheme() {
   $('m-theme-text').textContent = 'Theme: ' + t.name;
   setIcon($('m-theme-icon'), t.icon);
 }
-$('m-theme').addEventListener('click', () => {
-  themeIdx = (themeIdx + 1) % THEMES.length;
+function setTheme(id) {
+  const i = THEMES.findIndex((t) => t.id === id);
+  if (i < 0) return;
+  themeIdx = i;
   store.set('beta_theme', THEMES[themeIdx].id);
   const root = document.documentElement;
   root.classList.add('theme-anim'); setTimeout(() => root.classList.remove('theme-anim'), 450);   // smooth cross-fade
   applyTheme();
-});
+}
+function openThemes() {
+  const body = $('themes-body'); body.textContent = '';
+  [['dark', 'Dark themes'], ['light', 'Light themes']].forEach(([kind, title]) => {
+    body.appendChild(cardLabel(title));
+    THEMES.filter((t) => t.kind === kind).forEach((t) => {
+      const b = document.createElement('button'); b.className = 'sheet-item thm-row' + (t.id === THEMES[themeIdx].id ? ' on' : '');
+      const sw = document.createElement('span'); sw.className = 'thm-sw';
+      t.sw.forEach((c) => { const d = document.createElement('i'); d.style.background = c; sw.appendChild(d); });
+      b.appendChild(sw);
+      const n = document.createElement('span'); n.className = 'thm-name'; n.textContent = t.name + (t.id === THEMES[themeIdx].id ? '  ✓' : ''); b.appendChild(n);
+      b.addEventListener('click', () => { setTheme(t.id); hide('themes'); });
+      body.appendChild(b);
+    });
+  });
+  show('themes');
+}
+$('m-theme').addEventListener('click', () => { hide('menu'); openThemes(); });
+$('themes-close').addEventListener('click', () => hide('themes'));
 applyTheme();
 
 // ---- install as an app ----
@@ -1743,6 +1778,72 @@ async function openHelp() {
 }
 $('m-help').addEventListener('click', () => { hide('menu'); openHelp(); });
 $('help-close').addEventListener('click', () => hide('help'));
+
+// ---- paste: a picture from the clipboard becomes an attachment, and a big paste of text becomes a file chip
+// (like attaching a text file) instead of filling the whole message box
+const PASTE_TEXT_MIN_CHARS = 1500, PASTE_TEXT_MIN_LINES = 20;
+let pasteCount = 0;
+function textToBase64(t) {
+  const bytes = new TextEncoder().encode(t); let bin = ''; const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+  return btoa(bin);
+}
+async function addPastedImage(file) {
+  if (attachments.length >= 4) { toast('Up to 4 files at a time', true); return false; }
+  try { attachments.push({ name: 'pasted-image-' + (++pasteCount) + '.jpg', data: await shrinkImage(file) }); renderChips(); return true; }
+  catch (e) { toast(e.message || "Couldn't use that picture", true); return false; }
+}
+function addPastedText(text) {
+  if (attachments.length >= 4) { toast('Up to 4 files at a time', true); return false; }
+  if (text.length > 4000000) { toast('That text is too long to attach (limit about 4 MB)', true); return false; }
+  attachments.push({ name: 'pasted-text-' + (++pasteCount) + '.txt', data: textToBase64(text), pasted: text });
+  renderChips(); return true;
+}
+const isBigText = (t) => t.length >= PASTE_TEXT_MIN_CHARS || t.split('\n').length >= PASTE_TEXT_MIN_LINES;
+function insertAtCaret(text) {
+  const el = $('input'); const a = el.selectionStart || 0, b = el.selectionEnd || 0;
+  el.value = el.value.slice(0, a) + text + el.value.slice(b); el.selectionStart = el.selectionEnd = a + text.length; autosize();
+}
+$('input').addEventListener('paste', async (e) => {
+  const cd = e.clipboardData; if (!cd) return;
+  let files = Array.from(cd.files || []).filter((f) => f.type && f.type.startsWith('image/'));
+  if (!files.length && cd.items) files = Array.from(cd.items).filter((it) => it.kind === 'file' && it.type.startsWith('image/')).map((it) => it.getAsFile()).filter(Boolean);
+  if (files.length) { e.preventDefault(); for (const f of files) { if (!(await addPastedImage(f))) break; } return; }
+  const text = cd.getData('text/plain') || '';
+  if (text && isBigText(text)) { e.preventDefault(); addPastedText(text); }            // small pastes behave as usual
+});
+// Some phone keyboards and browsers don't send a paste event for pictures, so there is also a Paste button.
+$('paste-btn').addEventListener('click', async () => {
+  try {
+    if (navigator.clipboard && navigator.clipboard.read) {
+      const items = await navigator.clipboard.read(); let did = false;
+      for (const it of items) {
+        const img = it.types.find((t) => t.startsWith('image/'));
+        if (img) { did = (await addPastedImage(new File([await it.getType(img)], 'pasted.png', { type: img }))) || did; continue; }
+        if (it.types.includes('text/plain')) { const t = await (await it.getType('text/plain')).text(); if (t) { isBigText(t) ? addPastedText(t) : insertAtCaret(t); did = true; } }
+      }
+      if (did) return;
+      toast('The clipboard is empty');
+      return;
+    }
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      const t = await navigator.clipboard.readText();
+      if (t) { isBigText(t) ? addPastedText(t) : insertAtCaret(t); return; }
+      toast('The clipboard is empty'); return;
+    }
+    throw new Error('unsupported');
+  } catch (e) {
+    toast("Your browser wouldn't let B.E.T.A. read the clipboard. Long-press inside the message box and choose Paste instead.", true);
+  }
+});
+let pasteViewing = null;
+function openPasteView(a) {
+  pasteViewing = a;
+  $('pasteview-body').textContent = a.pasted.length > 30000 ? a.pasted.slice(0, 30000) + '\n\n…(only the first 30,000 characters are shown here; all of it is attached)' : a.pasted;
+  show('pasteview');
+}
+$('pasteview-close').addEventListener('click', () => hide('pasteview'));
+$('pasteview-remove').addEventListener('click', () => { attachments = attachments.filter((q) => q !== pasteViewing); pasteViewing = null; renderChips(); hide('pasteview'); });
 
 // ---- "are you looking at B.E.T.A.?" - told to the server the moment it changes, so alerts fire reliably
 let lastPresence = null;

@@ -58,7 +58,7 @@ app.config["MAX_CONTENT_LENGTH"] = max(32 * 1024 * 1024, video_store.MAX_BYTES +
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "2.7"
+APP_VERSION = "2.8"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
