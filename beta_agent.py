@@ -202,6 +202,32 @@ def _with_today(messages):
     return out
 
 
+def _groq_extra_names():
+    """Offered only in the menu's Model picker (never used automatically): see agent_core.GROQ_EXTRA_MODELS."""
+    return [m for m in ac.GROQ_EXTRA_MODELS if m not in ac.GROQ_MODELS]
+
+
+def _shrink_old_attachments(messages, keep_recent=6, max_chars=6000):
+    """A big pasted text is only needed in full while it's being discussed. In the copy sent to the model, older messages
+    keep their first part and the rest is cut, so one long paste can't weigh down (or break) every later request."""
+    cutoff = len(messages) - keep_recent
+    out = []
+    for i, m in enumerate(messages):
+        if i < cutoff and m.get("role") == "user":
+            c = m.get("content")
+            if isinstance(c, str) and len(c) > max_chars:
+                m = dict(m, content=c[:max_chars] + "\n[...older long text shortened]")
+            elif isinstance(c, list):
+                parts = []
+                for p in c:
+                    if isinstance(p, dict) and p.get("type") == "text" and len(p.get("text", "")) > max_chars:
+                        p = dict(p, text=p["text"][:max_chars] + "\n[...older long text shortened]")
+                    parts.append(p)
+                m = dict(m, content=parts)
+        out.append(m)
+    return out
+
+
 def _shrink_old_tool_results(messages, keep_recent=14, max_chars=600):
     """Old search results and command outputs are bulky and rarely needed again: keep the newest in full and cut the
     rest, so a longer history (60 messages) stays light."""
@@ -327,7 +353,7 @@ class BetaAgent(ac.Agent):
                 "what it shows and ask what to change." % title)
 
     def _watch_attached_video(self, question, video_id=""):
-        model = self.forced if (self.forced and self.forced != "groq") else ac.MODEL
+        model = self.forced if (self.forced and not str(self.forced).startswith("groq")) else ac.MODEL
         try:
             text = video_store.analyze(question, video_id or None, self._api_key, model)
         except video_store.VideoError as e:
@@ -346,7 +372,7 @@ class BetaAgent(ac.Agent):
         return k10_bridge.request_send("alpha", subject, body, attachment_name, attachment_text, explanation, self._emit_card)
 
     # ---- choosing the model by hand (menu > Model) ----
-    forced = None            # None = automatic, "groq", or the name of one Gemini model
+    forced = None            # None = automatic, "groq" (the Groq chain), "groq:<model>" (one Groq model), or one Gemini model
     _preview_nudged = False
 
     @property
@@ -362,10 +388,14 @@ class BetaAgent(ac.Agent):
             self.forced = None
             if self._switch_reason == "manual":
                 self.active_provider, self._switch_reason = "gemini", None
-        elif choice == "groq":
+        elif choice == "groq" or choice.startswith("groq:"):
             if not self.groq_client:
                 return "Groq isn't switched on (no GROQ_API_KEY on the server)."
-            self.forced, self.active_provider, self._switch_reason = "groq", "groq", "manual"
+            if choice != "groq" and choice[5:] not in list(ac.GROQ_MODELS) + _groq_extra_names():
+                return "Unknown Groq model."
+            self.forced, self.active_provider, self._switch_reason = choice, "groq", "manual"
+            if choice != "groq":
+                self._groq_cooldown.pop(choice[5:], None)       # you picked it by hand: try it even if it was resting
         elif choice in chain or choice in self.extra_models:
             self.forced, self.active_provider = choice, "gemini"
             if self._switch_reason == "manual":
@@ -385,9 +415,9 @@ class BetaAgent(ac.Agent):
             self.set_forced(pref["model"])
 
     def _current_client_and_models(self):
-        if self.forced == "groq" and self.groq_client:
-            return self.groq_client, [ac.GROQ_MODEL]
-        if self.forced and self.forced != "groq" and self.active_provider == "gemini":
+        if self.forced and str(self.forced).startswith("groq") and self.groq_client:
+            return self.groq_client, ([self.forced[5:]] if self.forced != "groq" else self._groq_models_now())
+        if self.forced and not str(self.forced).startswith("groq") and self.active_provider == "gemini":
             return self.client, [self.forced]
         return super()._current_client_and_models()
 
@@ -396,9 +426,15 @@ class BetaAgent(ac.Agent):
         chain = [ac.MODEL] + list(ac.FALLBACK_MODELS)
         for m, e in zip(chain, [x for x in snap["models"] if x.get("provider") != "groq"]):
             e.setdefault("model", m)                       # the model picker needs every row to carry its name
-        for e in snap["models"]:
-            if e.get("provider") == "groq":
-                e.setdefault("model", ac.GROQ_MODEL)
+        groq_extras = []
+        if self.groq_client:
+            for gm in _groq_extra_names():
+                try:
+                    row = dict(ac.USAGE.entry(gm))
+                except Exception:
+                    row = {"limit": None, "used": 0}
+                row.update(provider="groq", model=gm, groq_extra=True)
+                groq_extras.append(row)
         extras = []
         for m in self.extra_models:
             try:
@@ -409,10 +445,11 @@ class BetaAgent(ac.Agent):
             e["extra"] = True
             extras.append(e)
         snap["models"] = ([x for x in snap["models"] if x.get("provider") != "groq"] + extras +
-                          [x for x in snap["models"] if x.get("provider") == "groq"])
+                          [x for x in snap["models"] if x.get("provider") == "groq"] + groq_extras)
         snap["forced"] = self.forced
-        if self.forced == "groq" and self.groq_client:
-            snap["provider"], snap["active"] = "groq", ac.GROQ_MODEL
+        if self.forced and str(self.forced).startswith("groq") and self.groq_client:
+            snap["provider"] = "groq"
+            snap["active"] = self.forced[5:] if self.forced != "groq" else (self._groq_last or self._groq_models_now()[0])
         elif self.forced and self.active_provider == "gemini":
             snap["provider"], snap["active"] = "gemini", self.forced
         return snap
@@ -424,7 +461,7 @@ class BetaAgent(ac.Agent):
         def airis_loop():
             while True:
                 time.sleep(60 if self._switch_reason == "overload" else 300)
-                if self.active_provider != "groq" or self.forced == "groq":
+                if self.active_provider != "groq" or (self.forced and str(self.forced).startswith("groq")):
                     continue
                 if not self._lock.acquire(blocking=False):
                     continue
@@ -456,7 +493,7 @@ class BetaAgent(ac.Agent):
         return "timed out" in low or "timeout" in low or "connection error" in low
 
     def _messages_for_request(self):
-        return _with_today(super()._messages_for_request())      # works for Gemini and for the trimmed Groq history alike
+        return _with_today(_shrink_old_attachments(super()._messages_for_request()))   # works for Gemini and for the trimmed Groq history alike
 
     def _emit_card(self, payload):
         if self._current_on_images:

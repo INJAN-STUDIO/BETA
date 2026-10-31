@@ -1,0 +1,10 @@
+{
+  "appId": "com.beta.app",
+  "appName": "BETA",
+  "webDir": "www",
+  "server": {
+    "url": "https://beta-033v.onrender.com/",
+    "allowNavigation": ["beta-033v.onrender.com"]
+  },
+  "bundledWebRuntime": false
+}

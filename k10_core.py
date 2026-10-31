@@ -19,9 +19,12 @@ Settings (environment variables, same on both sides):
 """
 
 import base64
+import collections
 import json
 import os
+import socket
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -43,6 +46,78 @@ STATES = ("new", "accepted", "rejected")
 
 class K10Error(Exception):
     """A problem with a message that is safe to show to the user."""
+
+
+class K10Unavailable(K10Error):
+    """The mail line itself can't be used right now (network, Supabase, settings). Safe to show to the user.
+    kind: config | key | network | timeout | auth | table | server | other.   detail: technical note for the log only."""
+
+    def __init__(self, kind, message, detail=""):
+        super().__init__(message)
+        self.kind, self.detail = kind, detail
+
+
+# ---------------------------------------------------------------------------
+# Logging: one line per event on stdout (Render's log / ALPHA's terminal) and a small in-memory history
+# that the programs can show on screen. Secrets are scrubbed before anything is written.
+# ---------------------------------------------------------------------------
+
+_LOG = collections.deque(maxlen=60)
+_LOG_LOCK = threading.Lock()
+
+
+def _redact(text):
+    text = str(text)
+    for name in ("K10_KEY", "SUPABASE_KEY"):
+        secret = (os.environ.get(name) or "").strip()
+        if len(secret) >= 8:
+            text = text.replace(secret, "<%s hidden>" % name)
+    return text
+
+
+def log(message):
+    line = _redact(message)
+    stamp = time.strftime("%H:%M:%S")
+    print("[K-10] %s" % line, flush=True)
+    with _LOG_LOCK:
+        _LOG.append("%s  %s" % (stamp, line))
+
+
+def recent_log():
+    with _LOG_LOCK:
+        return list(_LOG)
+
+
+def classify_error(exc):
+    """Turns any low-level failure into a K10Unavailable that says what is actually wrong."""
+    if isinstance(exc, K10Unavailable):
+        return exc
+    detail = "%s: %s" % (type(exc).__name__, str(exc)[:160])
+    if isinstance(exc, urllib.error.HTTPError):
+        code = exc.code
+        try:
+            detail += " | " + exc.read(200).decode("utf-8", "replace")
+        except Exception:
+            pass
+        if code in (401, 403):
+            return K10Unavailable("auth", "Supabase rejected SUPABASE_KEY (HTTP %d). Check that the key is current and allowed to use the beta_kv table." % code, detail)
+        if code == 404:
+            return K10Unavailable("table", "Supabase answered 404. Check SUPABASE_URL, and that the beta_kv table exists.", detail)
+        if code == 429:
+            return K10Unavailable("server", "Supabase is limiting requests right now (HTTP 429). K-10 will try again shortly.", detail)
+        if code >= 500:
+            return K10Unavailable("server", "Supabase has a problem on its side (HTTP %d). If your free project was paused for inactivity, restore it in the Supabase dashboard." % code, detail)
+        return K10Unavailable("other", "Supabase refused the request (HTTP %d)." % code, detail)
+    reason = getattr(exc, "reason", None)
+    if isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(reason, (socket.timeout, TimeoutError)):
+        return K10Unavailable("timeout", "Supabase didn't answer in time.", detail)
+    if isinstance(exc, urllib.error.URLError):
+        if isinstance(reason, socket.gaierror):
+            return K10Unavailable("network", "Couldn't find Supabase on the network (DNS lookup failed). Check SUPABASE_URL and the internet connection.", detail)
+        return K10Unavailable("network", "Couldn't reach Supabase (%s). Check the internet connection." % type(reason).__name__, detail)
+    if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+        return K10Unavailable("server", "Supabase sent an answer K-10 couldn't read. Check that SUPABASE_URL points at the right project.", detail)
+    return K10Unavailable("other", "K-10 couldn't reach its mailbox (%s)." % type(exc).__name__, detail)
 
 
 def _b64(raw):
@@ -97,15 +172,26 @@ class MemoryBackend:
 class SupabaseBackend:
     """Plain HTTPS calls to Supabase's REST interface (table beta_kv: key text primary key, value jsonb)."""
 
-    def __init__(self, url, key, table="beta_kv"):
+    def __init__(self, url, key, table="beta_kv", timeout=8):
+        self.timeout = timeout
         self.base = url.rstrip("/") + "/rest/v1/" + table
         self.headers = {"apikey": key, "Content-Type": "application/json"}
         if key.startswith("eyJ"):
             self.headers["Authorization"] = "Bearer " + key
 
     def _open(self, req):
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return resp.read().decode("utf-8")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                return resp.read().decode("utf-8")
+        except Exception as e:
+            raise classify_error(e) from e
+
+    @staticmethod
+    def _json(text):
+        try:
+            return json.loads(text)
+        except Exception as e:
+            raise classify_error(e) from e
 
     def put(self, key, value):
         headers = dict(self.headers, Prefer="resolution=merge-duplicates,return=minimal")
@@ -114,13 +200,13 @@ class SupabaseBackend:
 
     def get(self, key):
         url = self.base + "?key=eq." + urllib.parse.quote(key, safe="") + "&select=value"
-        rows = json.loads(self._open(urllib.request.Request(url, headers=self.headers)))
+        rows = self._json(self._open(urllib.request.Request(url, headers=self.headers)))
         return rows[0]["value"] if rows else None
 
     def list(self, prefix, limit=100):
         url = (self.base + "?key=like." + urllib.parse.quote(prefix + "*", safe="*") +
                "&select=key,value&order=key.desc&limit=%d" % int(limit))
-        rows = json.loads(self._open(urllib.request.Request(url, headers=self.headers)))
+        rows = self._json(self._open(urllib.request.Request(url, headers=self.headers)))
         return [(r["key"], r["value"]) for r in reversed(rows)]
 
     def delete(self, key):
@@ -243,12 +329,39 @@ class Mailbox:
                         pass
 
 
-def from_env(me, env=None):
+def _settings(env):
     env = env if env is not None else os.environ
-    url, key, master = (env.get("SUPABASE_URL") or "").strip(), (env.get("SUPABASE_KEY") or "").strip(), (env.get("K10_KEY") or "").strip()
-    if not (url and key and master):
-        raise K10Error("K-10 needs K10_KEY, SUPABASE_URL and SUPABASE_KEY to be set.")
-    return Mailbox(me, master, SupabaseBackend(url, key))
+    return tuple((env.get(n) or "").strip() for n in ("SUPABASE_URL", "SUPABASE_KEY", "K10_KEY"))
+
+
+def from_env(me, env=None, timeout=8):
+    url, key, master = _settings(env)
+    missing = [n for n, v in (("SUPABASE_URL", url), ("SUPABASE_KEY", key), ("K10_KEY", master)) if not v]
+    if missing:
+        raise K10Unavailable("config", "K-10 isn't set up: %s %s missing." % (", ".join(missing), "is" if len(missing) == 1 else "are"))
+    return Mailbox(me, master, SupabaseBackend(url, key, timeout=timeout))
+
+
+def diagnose(env=None, timeout=6):
+    """Checks the settings, the key and the connection, step by step, and says exactly which one is wrong.
+    Never raises. Returns {"ok": bool, "kind": ..., "message": ..., "detail": ..., "step": ...}."""
+    url, key, master = _settings(env)
+    missing = [n for n, v in (("SUPABASE_URL", url), ("SUPABASE_KEY", key), ("K10_KEY", master)) if not v]
+    if missing:
+        return {"ok": False, "step": "settings", "kind": "config", "detail": "",
+                "message": "K-10 isn't set up: %s %s missing." % (", ".join(missing), "is" if len(missing) == 1 else "are")}
+    try:
+        _direction_key(master, "alpha", "beta")
+    except K10Error as e:
+        return {"ok": False, "step": "key", "kind": "key", "message": str(e), "detail": ""}
+    try:
+        SupabaseBackend(url, key, timeout=timeout).list(PREFIX, limit=1)
+    except K10Unavailable as e:
+        return {"ok": False, "step": "connection", "kind": e.kind, "message": str(e), "detail": e.detail}
+    except Exception as e:
+        u = classify_error(e)
+        return {"ok": False, "step": "connection", "kind": u.kind, "message": str(u), "detail": u.detail}
+    return {"ok": True, "step": "done", "kind": None, "message": "K-10 is reachable.", "detail": ""}
 
 
 if __name__ == "__main__":

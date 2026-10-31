@@ -58,7 +58,7 @@ app.config["MAX_CONTENT_LENGTH"] = max(32 * 1024 * 1024, video_store.MAX_BYTES +
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "2.8"
+APP_VERSION = "2.9"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -540,6 +540,10 @@ def logout():
 # Chat routes
 # ---------------------------------------------------------------------------
 
+# Attached text is stored inside the user's message so the model can read it; the chat screen shows only a short marker.
+_ATTACHED_BLOCK = re.compile(r"\n*--- Attached file: ([^\n]*?) ---\n.*?\n--- End of \1 ---", re.S)
+
+
 def _history_for_ui(agent, limit=30):
     out = []
     for m in getattr(agent, "messages", []):
@@ -551,6 +555,8 @@ def _history_for_ui(agent, limit=30):
             content = " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
         if not isinstance(content, str) or not content.strip():
             continue
+        if role == "user" and "--- Attached file:" in content:
+            content = _ATTACHED_BLOCK.sub("\n📎 (attached text)", content)
         out.append({"role": role, "text": content})
     return out[-limit:]
 
@@ -828,7 +834,7 @@ def models_info():
     agent = get_agent()
     snap = agent.usage_snapshot()
     return jsonify(forced=snap.get("forced"), active=snap["active"], provider=snap["provider"], models=snap["models"],
-                   groq=snap.get("groq", False))
+                   groq=snap.get("groq", False), groq_models=snap.get("groq_models", []))
 
 
 @app.route("/api/model", methods=["POST"])
@@ -871,22 +877,49 @@ def gemini_traffic():
 # ---------------------------------------------------------------------------
 
 def _k10_off():
-    return None if k10_bridge.enabled() else (jsonify(error="K-10 isn't set up on the server (K10_KEY is missing)."), 503)
+    """Answers instantly when K-10 can't be used: never waits for the network (k10_link.py reconnects in the background)."""
+    if not k10_bridge.enabled():
+        return jsonify(error="K-10 isn't set up on the server (K10_KEY, SUPABASE_URL and SUPABASE_KEY are needed)."), 503
+    if not k10_bridge.ready():
+        k10_bridge.kick()                                   # try to reconnect right now, in the background
+        st = k10_bridge.status()
+        return jsonify(error=k10_bridge.not_ready_message(), state=st["state"], retry_in=st["retry_in"]), 503
+    return None
 
 
 def _k10_error(e):
-    return jsonify(error=str(e) if isinstance(e, k10_core.K10Error) else "K-10 couldn't reach its mailbox. Try again."), 400
+    """Every K-10 route failure ends up here: logged with the real reason, and the user gets a plain explanation."""
+    if isinstance(e, k10_core.K10Unavailable):
+        k10_core.log("request failed [%s]: %s" % (e.kind, e.detail or e))
+        k10_bridge.note_error(e)                            # flips K-10 to 'unavailable' and starts reconnecting
+        return jsonify(error=str(e)), 503
+    if isinstance(e, k10_core.K10Error):
+        return jsonify(error=str(e)), 400                   # e.g. "The message is empty." - the user's own mistake
+    k10_core.log("request failed: unexpected %s: %s" % (type(e).__name__, str(e)[:160]))
+    return jsonify(error="K-10 had an unexpected problem. It was logged - try again in a moment."), 500
 
 
 @app.route("/api/k10/info")
 def k10_info():
+    """Instant: only reads what the background connection last learned, so the page never waits on K-10 at startup."""
     if not k10_bridge.enabled():
         return jsonify(enabled=False)
-    try:
-        new = sum(1 for m in k10_bridge.mailbox().inbox(limit=30) if m["state"] == "new")
-    except Exception:
-        new = None
-    return jsonify(enabled=True, new=new)
+    st = k10_bridge.status()
+    return jsonify(enabled=True, new=st["unread"] if st["ready"] else None, ready=st["ready"], state=st["state"],
+                   message=st["message"], retry_in=st["retry_in"], warning=st["warning"])
+
+
+@app.route("/api/k10/retry", methods=["POST"])
+def k10_retry():
+    """'Try again now' - starts a reconnect in the background and returns straight away."""
+    k10_bridge.kick()
+    return jsonify(ok=True, **k10_bridge.status())
+
+
+@app.route("/api/k10/log")
+def k10_log_route():
+    """The last K-10 events (no secrets), so problems can be read from the phone without opening Render's dashboard."""
+    return jsonify(lines=k10_core.recent_log(), status=k10_bridge.status())
 
 
 @app.route("/api/k10/list")
@@ -896,7 +929,9 @@ def k10_list():
         return off
     try:
         mb = k10_bridge.mailbox()
-        return jsonify(messages=mb.sent() if request.args.get("box") == "sent" else mb.inbox())
+        rows = mb.sent() if request.args.get("box") == "sent" else mb.inbox()
+        k10_bridge.note_ok()
+        return jsonify(messages=rows)
     except Exception as e:
         return _k10_error(e)
 
@@ -907,7 +942,9 @@ def k10_read(mid):
     if off:
         return off
     try:
-        return jsonify(k10_bridge.mailbox().read(mid))
+        msg = k10_bridge.mailbox().read(mid)
+        k10_bridge.note_ok()
+        return jsonify(msg)
     except Exception as e:
         return _k10_error(e)
 
@@ -994,6 +1031,14 @@ def video_upload():
 # "What can B.E.T.A. do?" - which abilities are actually switched on right now
 # ---------------------------------------------------------------------------
 
+def _attach_chars():
+    try:
+        import agent_core as ac
+        return int(ac.ATTACH_TEXT_CHARS)
+    except Exception:
+        return 60000
+
+
 @app.route("/api/capabilities")
 def capabilities():
     env = os.environ
@@ -1010,6 +1055,7 @@ def capabilities():
         alerts=_any_channel(), alerts_ntfy=_ntfy_ready(),
         groq=bool(env.get("GROQ_API_KEY", "").strip()),
         extra_models=extras,
+        attach_chars=_attach_chars(),
         video_max_mb=video_store.MAX_BYTES // 1048576,
     )
 

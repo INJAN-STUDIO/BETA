@@ -39,6 +39,9 @@ const ICONS = {
   loader: '<path d="M21 12a9 9 0 11-6.2-8.56"/>',
   'play-fill': '<path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/>',
   'arrow-down': '<path d="M12 5v14M19 12l-7 7-7-7"/>',
+  clipboard: '<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3M12 17h.01"/>',
+  video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
   lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>',
   unlock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 019.9-1"/>',
   mail: '<path d="M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z"/><polyline points="22,6 12,13 2,6"/>',
@@ -457,7 +460,19 @@ function addMessage(role, text, animate) {
   const el = document.createElement('div');
   el.className = 'msg ' + (role === 'user' ? 'user' : role === 'error' ? 'ai error' : 'ai');
   let typing = null;
-  if (role === 'user') el.textContent = text;
+  if (role === 'user') {
+    el.textContent = text;
+    const row = document.createElement('div'); row.className = 'user-actions';
+    const cp = document.createElement('button'); cp.className = 'user-copy';
+    cp.setAttribute('aria-label', 'Copy your message'); cp.innerHTML = iconSvg('clipboard');
+    cp.addEventListener('click', async () => {
+      const ok = await copyText(text);
+      cp.innerHTML = iconSvg(ok ? 'check' : 'clipboard');
+      setTimeout(() => { cp.innerHTML = iconSvg('clipboard'); }, 1600);
+      if (!ok) toast("Couldn't copy - your browser blocked it", true);
+    });
+    row.appendChild(cp); el.appendChild(row);
+  }
   else if (role === 'error') el.textContent = text;
   else {
     const rich = renderRich(text);
@@ -724,13 +739,14 @@ function updateUsage(s) {
   if (!s || !s.models || !s.models.length) return;
   // The model order, spelled out in the menu - including whether the Groq backup is switched on.
   if (s.groq !== undefined) {
-    const short = (m) => m.replace(/^gemini-/, '').replace(/^openai\//, '');
+    const short = shortModel;
     const gem = s.models.filter((m) => m.provider !== 'groq').map((m) => short(m.model));
+    const groqList = (s.groq_models && s.groq_models.length ? s.groq_models : [s.groq_model || 'groq']).map(short);
     $('m-models').textContent = 'Models in order: ' + gem.join(' → ') + ' → ' +
-      (s.groq ? 'Groq (' + short(s.groq_model || 'groq') + ') ready' : 'Groq: not switched on (no GROQ_API_KEY on the server)');
+      (s.groq ? 'Groq (' + groqList.join(' → ') + ') ready' : 'Groq: not switched on (no GROQ_API_KEY on the server)');
   }
   const e = s.models.find((m) => m.model === s.active) || s.models[0];
-  const name = e.model.replace(/^gemini-/, '').replace(/^openai\//, '');
+  const name = shortModel(e.model);
   $('usage-label').textContent = e.limit == null ? `${name} · ${e.used} used` : `${name} · ${e.remaining}/${e.limit} left`;
   const pct = e.limit ? Math.max(0, Math.min(100, (e.remaining / e.limit) * 100)) : 100;
   $('usage-fill').style.width = pct + '%';
@@ -748,16 +764,39 @@ const store = {
 };
 let voiceOn = store.get('beta_voice') === '1';
 
-function speakable(text) {
-  return text
+function cleanForSpeech(text) {
+  return String(text || '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/^\s*\|.*\|\s*$/gm, ' ')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/[`*#>_]/g, '')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 900);
+    .trim();
+}
+const speakable = cleanForSpeech;                         // (the old version cut every reply off at 900 characters)
+
+// Cut the reply into pieces of whole sentences (about 450 characters each), so a long reply is read to the end and a
+// piece never stops mid-sentence. The next piece is fetched while the current one plays, so there is no gap.
+function speechChunks(text, max = 450) {
+  const clean = cleanForSpeech(text);
+  if (!clean) return [];
+  const sentences = clean.match(/.+?[.!?…]+(?=\s|$)["')\]]*\s*|.+$/g) || [clean];
+  const out = []; let cur = '';
+  const push = () => { if (cur.trim()) out.push(cur.trim()); cur = ''; };
+  for (let s of sentences) {
+    while (s.length > max) {                              // one very long sentence: cut at a comma or space
+      let cut = s.lastIndexOf(', ', max);
+      if (cut < max * 0.4) cut = s.lastIndexOf(' ', max);
+      if (cut < 1) cut = max;
+      if ((cur + s.slice(0, cut + 1)).length > max) push();
+      cur += s.slice(0, cut + 1); push(); s = s.slice(cut + 1);
+    }
+    if ((cur + s).length > max) push();
+    cur += s;
+  }
+  push();
+  return out;
 }
 // ---------------------------------------------------------------------------
 // Read aloud: the SERVER makes the speech with Microsoft Edge's neural voice (Brian) - the same engine
@@ -823,30 +862,46 @@ async function speak(text, btn) {
   setListenState(btn, 'loading');
   const ctrl = new AbortController();
   ttsAbort = ctrl;
-  try {
+  const chunks = speechChunks(text);
+  if (!chunks.length) { setListenState(btn, 'idle'); ttsBtn = null; return; }
+  const fetchChunk = async (t) => {
     const res = await fetch('/api/tts', {
       method: 'POST', credentials: 'same-origin', signal: ctrl.signal,
       headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'beta' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text: t }),
     });
     if (!res.ok) {
       let msg = "The voice isn't available right now.";
       try { msg = (await res.json()).error || msg; } catch (e) { /* not JSON */ }
       const err = new Error(msg); err.fromServer = true; throw err;
     }
-    const blob = await res.blob();
-    if (mine !== ttsToken) return;
-    if (ttsUrl) URL.revokeObjectURL(ttsUrl);
-    ttsUrl = URL.createObjectURL(blob);
-    ttsAudio.onended = () => { if (mine === ttsToken) { setListenState(btn, 'idle'); ttsBtn = null; } };
-    ttsAudio.src = ttsUrl;
-    await ttsAudio.play();
-    if (mine === ttsToken) setListenState(btn, 'playing');
+    return res.blob();
+  };
+  let started = false;
+  let next = fetchChunk(chunks[0]);
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      const blob = await next;
+      if (mine !== ttsToken) return;
+      next = i + 1 < chunks.length ? fetchChunk(chunks[i + 1]) : null;     // load the next piece while this one plays
+      if (next) next.catch(() => {});                                      // (an error is handled when it is awaited)
+      if (ttsUrl) URL.revokeObjectURL(ttsUrl);
+      ttsUrl = URL.createObjectURL(blob);
+      const ended = new Promise((resolve) => { ttsAudio.onended = resolve; ttsAudio.onerror = resolve; });
+      ttsAudio.src = ttsUrl;
+      await ttsAudio.play();
+      started = true;
+      if (mine === ttsToken) setListenState(btn, 'playing');
+      await ended;
+      if (mine !== ttsToken) return;
+    }
+    if (mine === ttsToken) { setListenState(btn, 'idle'); ttsBtn = null; }
   } catch (e) {
     if (e.name === 'AbortError' || mine !== ttsToken) return;
     setListenState(btn, 'idle'); ttsBtn = null;
-    const fallback = window.speechSynthesis ? speakable(text) : '';
-    if (fallback) {                                       // last resort: the phone's own voice
+    if (started) { toast('The voice stopped early - the connection dropped.', true); return; }
+    const fallback = window.speechSynthesis ? cleanForSpeech(text) : '';
+    if (fallback) {                                       // last resort: the phone's own voice (the whole reply)
       try { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(fallback)); toast("Using the phone's own voice"); return; } catch (err) { /* fall through */ }
     }
     toast(e.fromServer ? e.message : "Couldn't play the voice - check your connection", true);
@@ -904,17 +959,66 @@ $('input').addEventListener('beforeinput', (e) => {
   if ((e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') && !shiftDown) { e.preventDefault(); send(); }
 });
 
+let pendingVideos = [];     // {name, size, id, pct, xhr}
 function renderChips() {
   const row = $('attach-row');
   row.innerHTML = '';
-  row.classList.toggle('hidden', attachments.length === 0);
+  row.classList.toggle('hidden', attachments.length === 0 && pendingVideos.length === 0);
   attachments.forEach((a, i) => {
     const chip = document.createElement('span'); chip.className = 'chip';
-    const n = document.createElement('span'); n.className = 'name'; n.textContent = a.name; chip.appendChild(n);
+    const n = document.createElement('span'); n.className = 'name'; n.textContent = a.name;
+    if (a.pasted) {
+      n.textContent = '📋 Pasted text · ' + a.pasted.length.toLocaleString() + ' characters' +
+        (attachCharLimit && a.pasted.length > attachCharLimit ? ' · first ' + attachCharLimit.toLocaleString() + ' will be read' : '');
+      n.style.cursor = 'pointer'; n.addEventListener('click', () => openPasteView(a));
+    }
+    chip.appendChild(n);
     const x = document.createElement('button'); x.textContent = '×'; x.setAttribute('aria-label', 'Remove');
     x.addEventListener('click', () => { attachments.splice(i, 1); renderChips(); });
     chip.appendChild(x); row.appendChild(chip);
   });
+  pendingVideos.forEach((v) => {
+    const chip = document.createElement('span'); chip.className = 'chip vid';
+    const n = document.createElement('span'); n.className = 'name';
+    n.textContent = v.name + (v.id ? ' - ready' : ' - uploading ' + v.pct + '%'); chip.appendChild(n);
+    const x = document.createElement('button'); x.textContent = '×'; x.setAttribute('aria-label', 'Remove video');
+    x.addEventListener('click', () => { if (v.xhr && !v.id) { try { v.xhr.abort(); } catch (e) { /* ignore */ } } pendingVideos = pendingVideos.filter((q) => q !== v); renderChips(); });
+    chip.appendChild(x); row.appendChild(chip);
+  });
+}
+
+// A clip is sent to the server as it is (not shrunk), so it uses mobile data about equal to its size.
+let videoMaxBytes = null;
+async function loadVideoLimit() {
+  if (videoMaxBytes) return videoMaxBytes;
+  try { videoMaxBytes = ((await api('/api/capabilities')).video_max_mb || 25) * 1048576; } catch (e) { videoMaxBytes = 25 * 1048576; }
+  return videoMaxBytes;
+}
+const isVideoFile = (f) => (f.type || '').startsWith('video/') || /\.(mp4|mov|webm|3gp|mkv|avi|mpe?g)$/i.test(f.name || '');
+async function uploadVideo(file) {
+  if (pendingVideos.length >= 1) { toast('One video at a time', true); return; }
+  const max = await loadVideoLimit();
+  if (file.size > max) { toast(file.name + ' is over ' + Math.round(max / 1048576) + ' MB - trim it to a shorter clip', true); return; }
+  if (file.size > 20 * 1048576) {                          // a big clip uses that much mobile data, so ask first
+    const ok = await askConfirm('Upload this video?', 'It is ' + (file.size / 1048576).toFixed(0) + ' MB, which uses about that much mobile data and may take a while.', 'Upload');
+    if (!ok) return;
+  }
+  if (pendingVideos.length >= 1) return;
+  const v = { name: file.name, size: file.size, id: null, pct: 0, xhr: null };
+  pendingVideos.push(v); renderChips();
+  const xhr = new XMLHttpRequest(); v.xhr = xhr;
+  xhr.open('POST', '/api/video');
+  xhr.setRequestHeader('X-Requested-With', 'beta');
+  xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
+  xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+  xhr.upload.onprogress = (e) => { if (e.lengthComputable) { v.pct = Math.round((e.loaded / e.total) * 100); renderChips(); } };
+  const fail = (msg) => { toast(msg, true); pendingVideos = pendingVideos.filter((q) => q !== v); renderChips(); };
+  xhr.onload = () => {
+    let j = {}; try { j = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+    if (xhr.status === 200 && j.id) { v.id = j.id; v.pct = 100; renderChips(); } else fail(j.error || 'The video upload failed.');
+  };
+  xhr.onerror = () => fail("Couldn't upload the video - check your connection.");
+  xhr.send(file);
 }
 
 // Phone photos are 3-6 MB; shrink to ~1280px JPEG first so uploads are quick on mobile data.
@@ -933,14 +1037,25 @@ function loadBitmap(file) {
   if (!window.createImageBitmap) return viaImage();
   return createImageBitmap(file).catch(viaImage);
 }
+// Pictures are shrunk before upload. 2048 px keeps small text in a phone screenshot readable (1280 px halved it), a white
+// background goes behind transparent PNGs (JPEG would turn them black), and the result stays well under the server's 5 MB.
 async function shrinkImage(file) {
   const bmp = await loadBitmap(file);
   const bw = bmp.naturalWidth || bmp.width, bh = bmp.naturalHeight || bmp.height;
-  const scale = Math.min(1, 1280 / Math.max(bw, bh));
-  const c = document.createElement('canvas');
-  c.width = Math.round(bw * scale); c.height = Math.round(bh * scale);
-  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-  return c.toDataURL('image/jpeg', 0.82).split(',')[1];
+  let side = 2048, quality = 0.86, data = '';
+  for (let i = 0; i < 4; i++) {
+    const scale = Math.min(1, side / Math.max(bw, bh));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bw * scale)); c.height = Math.max(1, Math.round(bh * scale));
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    data = c.toDataURL('image/jpeg', quality).split(',')[1];
+    if (data.length * 0.75 <= 3.5 * 1048576) break;
+    side = Math.round(side * 0.75); quality = Math.max(0.6, quality - 0.08);
+  }
+  if (bmp.close) bmp.close();
+  return data;
 }
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
   const r = new FileReader();
@@ -952,6 +1067,7 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
 $('attach-btn').addEventListener('click', () => $('file-input').click());
 $('file-input').addEventListener('change', async (e) => {
   for (const file of Array.from(e.target.files)) {
+    if (isVideoFile(file)) { await uploadVideo(file); continue; }
     if (attachments.length >= 4) { toast('Up to 4 files at a time', true); break; }
     try {
       if (file.type.startsWith('image/')) attachments.push({ name: file.name.replace(/\.[^.]+$/, '') + '.jpg', data: await shrinkImage(file) });
@@ -976,9 +1092,12 @@ function setBusy(on) {
 
 async function send() {
   if (busy) return;
-  const text = $('input').value.trim();
+  if (pendingVideos.some((v) => !v.id)) { toast('Wait for the video to finish uploading', true); return; }
+  let text = $('input').value.trim() || (pendingVideos.length ? 'Please watch this video and tell me what happens in it.' : '');
+  if (!text && attachments.length) text = 'Please look at what I attached.';
   if (!text) return;
-  const files = attachments.slice();
+  const files = attachments.map(({ name, data }) => ({ name, data }));
+  const videos = pendingVideos.map((v) => v.id);
   finishAllTyping();                                  // show any reply that's still typing, in full
   stopSpeaking();
   const bubble = addMessage('user', text);
@@ -987,13 +1106,19 @@ async function send() {
     note.textContent = files.map((f) => f.name).join(', ');
     bubble.appendChild(note);
   }
+  if (videos.length) {
+    const note = document.createElement('span'); note.className = 'attach-note';
+    note.textContent = '🎬 ' + pendingVideos.map((v) => v.name).join(', ');
+    bubble.appendChild(note);
+  }
+  { const ua = bubble.querySelector && bubble.querySelector('.user-actions'); if (ua) bubble.appendChild(ua); }     // copy icon stays last
   $('input').value = ''; autosize();
-  attachments = []; renderChips();
+  attachments = []; pendingVideos = []; renderChips();
   const sb = $('send-btn'); sb.classList.remove('pulse'); void sb.offsetWidth; sb.classList.add('pulse');
   setBusy(true);
   showThinking();
   try {
-    const { job } = await api('/api/send', { method: 'POST', body: { text, files } });
+    const { job } = await api('/api/send', { method: 'POST', body: { text, files, videos } });
     currentJob = job;
     sessionStorage.setItem('beta_job', job);
     await pollJob(job);
@@ -1082,10 +1207,19 @@ applyTextSize();
 
 // ---- theme: logo colours (dark / light) or classic (ALPHA's original dark / light) ----
 const THEMES = [
-  { id: 'icon-dark', name: 'Logo colours · Dark', bar: '#051a22', icon: 'palette' },
-  { id: 'icon-light', name: 'Logo colours · Light', bar: '#e8f5f8', icon: 'palette' },
-  { id: 'dark', name: 'Classic dark (ALPHA)', bar: '#05060a', icon: 'moon' },
-  { id: 'light', name: 'Classic light', bar: '#f2f6fb', icon: 'sun' },
+  { id: 'icon-dark', name: 'Logo colours · Dark', bar: '#051a22', icon: 'palette', kind: 'dark', sw: ["#051a22", "#35b6d5", "#7fe3ee"] },
+  { id: 'icon-light', name: 'Logo colours · Light', bar: '#e8f5f8', icon: 'palette', kind: 'light', sw: ["#e8f5f8", "#0e6e9e", "#0b6a96"] },
+  { id: 'dark', name: 'Classic dark (ALPHA)', bar: '#05060a', icon: 'moon', kind: 'dark', sw: ["#05060a", "#2ab0ff", "#6fd2ff"] },
+  { id: 'light', name: 'Classic light', bar: '#f2f6fb', icon: 'sun', kind: 'light', sw: ["#f2f6fb", "#1469c8", "#0a66bd"] },
+  { id: 'midnight', name: 'Midnight purple · Dark', bar: '#0b0720', icon: 'palette', kind: 'dark', sw: ["#0b0720", "#8b5cf6", "#c4b5fd"] },
+  { id: 'forest', name: 'Forest green · Dark', bar: '#04140d', icon: 'palette', kind: 'dark', sw: ["#04140d", "#2fbf71", "#86efac"] },
+  { id: 'sunset', name: 'Sunset amber · Dark', bar: '#190c05', icon: 'palette', kind: 'dark', sw: ["#190c05", "#ff8a3d", "#ffc27a"] },
+  { id: 'rose', name: 'Rose · Dark', bar: '#1a0711', icon: 'palette', kind: 'dark', sw: ["#1a0711", "#ec4899", "#f9a8d4"] },
+  { id: 'ocean', name: 'Ocean blue · Dark', bar: '#04122b', icon: 'palette', kind: 'dark', sw: ["#04122b", "#3b82f6", "#93c5fd"] },
+  { id: 'amoled', name: 'True black · AMOLED', bar: '#000000', icon: 'palette', kind: 'dark', sw: ["#000000", "#4dd0e1", "#a5f3fc"] },
+  { id: 'paper', name: 'Paper · Warm light', bar: '#f6f1e7', icon: 'palette', kind: 'light', sw: ["#f6f1e7", "#b45309", "#92400e"] },
+  { id: 'mint', name: 'Mint · Light', bar: '#e9f7ef', icon: 'palette', kind: 'light', sw: ["#e9f7ef", "#0f8f55", "#0b7344"] },
+  { id: 'lavender', name: 'Lavender · Light', bar: '#f1ecfb', icon: 'palette', kind: 'light', sw: ["#f1ecfb", "#7c3aed", "#6d28d9"] },
 ];
 let themeIdx = Math.max(0, THEMES.findIndex((t) => t.id === store.get('beta_theme')));   // default: logo colours, dark
 function applyTheme() {
@@ -1095,13 +1229,33 @@ function applyTheme() {
   $('m-theme-text').textContent = 'Theme: ' + t.name;
   setIcon($('m-theme-icon'), t.icon);
 }
-$('m-theme').addEventListener('click', () => {
-  themeIdx = (themeIdx + 1) % THEMES.length;
+function setTheme(id) {
+  const i = THEMES.findIndex((t) => t.id === id);
+  if (i < 0) return;
+  themeIdx = i;
   store.set('beta_theme', THEMES[themeIdx].id);
   const root = document.documentElement;
   root.classList.add('theme-anim'); setTimeout(() => root.classList.remove('theme-anim'), 450);   // smooth cross-fade
   applyTheme();
-});
+}
+function openThemes() {
+  const body = $('themes-body'); body.textContent = '';
+  [['dark', 'Dark themes'], ['light', 'Light themes']].forEach(([kind, title]) => {
+    body.appendChild(cardLabel(title));
+    THEMES.filter((t) => t.kind === kind).forEach((t) => {
+      const b = document.createElement('button'); b.className = 'sheet-item thm-row' + (t.id === THEMES[themeIdx].id ? ' on' : '');
+      const sw = document.createElement('span'); sw.className = 'thm-sw';
+      t.sw.forEach((c) => { const d = document.createElement('i'); d.style.background = c; sw.appendChild(d); });
+      b.appendChild(sw);
+      const n = document.createElement('span'); n.className = 'thm-name'; n.textContent = t.name + (t.id === THEMES[themeIdx].id ? '  ✓' : ''); b.appendChild(n);
+      b.addEventListener('click', () => { setTheme(t.id); hide('themes'); });
+      body.appendChild(b);
+    });
+  });
+  show('themes');
+}
+$('m-theme').addEventListener('click', () => { hide('menu'); openThemes(); });
+$('themes-close').addEventListener('click', () => hide('themes'));
 applyTheme();
 
 // ---- install as an app ----
@@ -1307,7 +1461,19 @@ let replacedByNewerTab = false;
 (function injectMoreStyles() {
   const st = document.createElement('style');
   st.textContent = `
-    #menu .sheet { max-height: 86vh !important; overflow-y: auto !important; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+    #menu .menu-sheet { display: flex; flex-direction: column; max-height: 86vh; overflow: hidden; }
+    #menu .menu-scroll { overflow-y: auto; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+    #menu .menu-sheet .sheet-close { flex: none; margin-top: 8px; }
+    .wordmark { display: block; width: auto; margin: 0 auto; filter: drop-shadow(0 0 5px rgba(90,200,255,.40)); }
+    .wm-big { height: 38px; } .wm-small { height: 20px; margin: 0; }
+    .fc-btn.danger { background: rgba(231,76,60,.28); border-color: rgba(231,76,60,.85); }
+    .help-sec { font-weight: 700; margin: 14px 0 4px; } .help-it { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,.2); }
+    .help-st { font-size: .8em; opacity: .75; margin-left: 6px; } .help-try { opacity: .7; font-size: .88em; }
+    .chip.vid .name::before { content: '🎬 '; }
+    .user-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+    .user-copy { background: none; border: 0; color: inherit; opacity: .55; padding: 2px 4px; cursor: pointer; line-height: 0; }
+    .user-copy:active { opacity: 1; }
+    .user-copy svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; }
     .msg-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .btn-primary svg { width: 18px; height: 18px; vertical-align: -3px; margin-right: 6px; fill: none; stroke: currentColor; stroke-width: 1.8; }
     .cardlabel { font-size: .75em; letter-spacing: .05em; text-transform: uppercase; opacity: .65; margin-top: 10px; }
@@ -1413,7 +1579,7 @@ function addK10Result(p) {
 }
 
 // ---- choose the model by hand
-const shortModel = (m) => String(m || '').replace(/^gemini-/, '').replace(/^openai\//, '');
+const shortModel = (m) => String(m || '').replace(/^groq:/, '').replace(/^gemini-/, '').replace(/^[^/]+\//, '');
 async function refreshModelMenu() {
   try {
     const d = await api('/api/models');
@@ -1427,13 +1593,23 @@ async function openModels() {
   if (!d) { body.textContent = "Couldn't load the models. Try again."; return; }
   body.textContent = '';
   const rows = [{ id: 'auto', title: 'Automatic (recommended)', sub: 'B.E.T.A. uses the best model that still has quota left and switches by itself.', on: !d.forced }];
+  let extraHeader = false, groqHeader = false;
+  const groqNames = d.models.filter((m) => m.provider === 'groq' && !m.groq_extra).map((m) => shortModel(m.model));
   d.models.forEach((m) => {
     const isGroq = m.provider === 'groq';
-    rows.push({ id: isGroq ? 'groq' : m.model, title: shortModel(m.model) + (isGroq ? ' (Groq backup)' : ''),
+    if (m.extra && !extraHeader) { extraHeader = true; rows.push({ header: 'Smarter models - for coding and hard problems. Used only when you pick them.' }); }
+    if (isGroq && !groqHeader) {
+      groqHeader = true;
+      rows.push({ header: 'Groq - free backups. Each model has its own daily limit, and B.E.T.A. skips one that has run out.' });
+      rows.push({ id: 'groq', title: 'Groq - automatic order', sub: groqNames.join(' → '), on: d.forced === 'groq' });
+    }
+    const id = isGroq ? 'groq:' + m.model : m.model;
+    rows.push({ id, title: shortModel(m.model) + (m.groq_extra ? ' (preview)' : ''),
       sub: m.limit == null ? m.used + ' used today' : (m.remaining <= 0 ? 'used up for today' : m.remaining + ' of ' + m.limit + ' left today'),
-      on: d.forced === (isGroq ? 'groq' : m.model) });
+      on: d.forced === id });
   });
   rows.forEach((r) => {
+    if (r.header) { body.appendChild(cardLabel(r.header)); return; }
     const b = document.createElement('button'); b.className = 'sheet-item mdl-row' + (r.on ? ' on' : '');
     const a = document.createElement('span'); a.textContent = r.title + (r.on ? '  ✓' : ''); b.appendChild(a);
     const c = document.createElement('span'); c.className = 'mdl-sub'; c.textContent = r.sub; b.appendChild(c);
@@ -1494,7 +1670,7 @@ async function refreshK10Menu() {
     const d = await api('/api/k10/info');
     if (!d.enabled) { item.classList.add('hidden'); return; }
     item.classList.remove('hidden');
-    $('m-k10-text').textContent = 'K-10 mail' + (d.new ? ' (' + d.new + ' new)' : '');
+    $('m-k10-text').textContent = 'K-10 mail' + (d.ready === false ? ' (reconnecting…)' : (d.new ? ' (' + d.new + ' new)' : ''));
   } catch (e) { item.classList.add('hidden'); }
 }
 function k10Time(ts) { return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
@@ -1513,7 +1689,12 @@ async function k10Tab(tab) {
       if (m.preview) { const s3 = document.createElement('div'); s3.className = 'k10-prev'; s3.textContent = m.preview; b.appendChild(s3); }
       b.addEventListener('click', () => k10Open(m.id, tab)); body.appendChild(b);
     });
-  } catch (e) { body.textContent = e.message || "Couldn't open the mailbox."; }
+  } catch (e) {
+    body.textContent = (e.message || "Couldn't open the mailbox.") + ' ';
+    const retry = document.createElement('button'); retry.className = 'fc-btn'; retry.textContent = 'Try again now';
+    retry.addEventListener('click', async () => { retry.disabled = true; try { await api('/api/k10/retry', { method: 'POST', body: {} }); } catch (err) { /* ignore */ } setTimeout(() => k10Tab(tab), 2500); });
+    body.appendChild(document.createElement('br')); body.appendChild(retry);
+  }
 }
 async function k10Open(id, tab) {
   const body = $('k10-body'); body.textContent = 'Loading…';
@@ -1576,6 +1757,144 @@ $('k10-t-inbox').addEventListener('click', () => k10Tab('inbox'));
 $('k10-t-sent').addEventListener('click', () => k10Tab('sent'));
 $('k10-t-compose').addEventListener('click', () => k10Tab('compose'));
 $('k10-close').addEventListener('click', () => { hide('k10'); refreshK10Menu(); });
+
+// ---- what can B.E.T.A. do? (shows what is switched on right now)
+async function openHelp() {
+  const body = $('help-body'); body.textContent = 'Loading…'; show('help');
+  let c = {};
+  try { c = await api('/api/capabilities'); } catch (e) { /* show the list without live status */ }
+  const tag = (on) => on === undefined ? '' : (on ? '● on' : '○ not set up');
+  const groups = [
+    ['Talk and think', [
+      ['Answers questions, explains things simply, and writes or fixes code', 'Try: "explain how DNS works like I\'m new"'],
+      ['Remembers: the last 60 messages, plus long-term memory for things worth keeping', 'Try: "remember that my laptop is a Dell E5440"'],
+      ['Reads aloud (Listen button) and copies a whole reply (Copy button)', null]]],
+    ['Look things up', [
+      ['Searches the web, checks several sources and says when they disagree', 'Try: "what\'s new in Fedora?"'],
+      ['Finds and shows photos', 'Try: "show me photos of Lagos at night"', c.images_search],
+      ['Plays YouTube videos in the chat, or watches one and tells you what is in it', 'Try: "what does this video say? <link>"']]],
+    ['Make things', [
+      ['Draws pictures (name a character, or attach a reference picture)', 'Try: "draw Itachi under a red moon"', c.image_gen],
+      ['Makes files you can download: code, notes, Word documents', 'Try: "write me a backup script"'],
+      ['Shows live, tappable previews of app designs', 'Try: "show me a login screen blueprint"']]],
+    ['Look at your stuff', [
+      ['Reads pictures, text/code files and Word documents you attach (paperclip)', null],
+      ['Watches a video from your phone (up to ' + (c.video_max_mb || 25) + ' MB; it uses mobile data to upload)', 'Try: attach a clip and ask "summarise this"']]],
+    ['Your phone and ALPHA', [
+      ['Runs commands in Termux, only after you tap Accept', 'Try: "how much storage is left?"', c.termux ? (c.termux_connected ? true : false) : false],
+      ['K-10 mail: private, encrypted messages to ALPHA that you read and approve', 'Try: "send ALPHA my notes"', c.k10]]],
+    ['Control', [
+      ['Choose the model by hand, including smarter ones for coding', null],
+      ['Gemini traffic: a live check of whether Google\'s servers are busy', null],
+      ['Alerts when a reply is ready while you are away', null, c.alerts],
+      ['Themes, text size, install as an app, clear the chat, lock the app', null]]],
+  ];
+  body.textContent = '';
+  groups.forEach(([title, items]) => {
+    const h = document.createElement('div'); h.className = 'help-sec'; h.textContent = title; body.appendChild(h);
+    items.forEach(([what, example, on]) => {
+      const d = document.createElement('div'); d.className = 'help-it';
+      const t = document.createElement('span'); t.textContent = what; d.appendChild(t);
+      const st = tag(on); if (st) { const s2 = document.createElement('span'); s2.className = 'help-st'; s2.textContent = st; d.appendChild(s2); }
+      if (example) { const e = document.createElement('div'); e.className = 'help-try'; e.textContent = example; d.appendChild(e); }
+      body.appendChild(d);
+    });
+  });
+}
+$('m-help').addEventListener('click', () => { hide('menu'); openHelp(); });
+$('help-close').addEventListener('click', () => hide('help'));
+
+// ---- paste: a picture from the clipboard becomes an attachment, and a big paste of text becomes a file chip
+// (like attaching a text file) instead of filling the whole message box
+const PASTE_TEXT_MIN_CHARS = 1500, PASTE_TEXT_MIN_LINES = 20;
+let pasteCount = 0, attachCharLimit = null, pasteHinted = false;
+async function loadAttachLimit() {                       // how much attached text the AI reads (set on the server)
+  if (attachCharLimit) return attachCharLimit;
+  try { attachCharLimit = (await api('/api/capabilities')).attach_chars || 60000; } catch (e) { attachCharLimit = 60000; }
+  return attachCharLimit;
+}
+function textToBase64(t) {
+  const bytes = new TextEncoder().encode(t); let bin = ''; const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+  return btoa(bin);
+}
+async function addPastedImage(file) {
+  if (attachments.length >= 4) { toast('Up to 4 files at a time', true); return false; }
+  try { attachments.push({ name: 'pasted-image-' + (++pasteCount) + '.jpg', data: await shrinkImage(file) }); renderChips(); toast('Picture pasted'); return true; }
+  catch (e) { toast(e.message || "Couldn't use that picture", true); return false; }
+}
+async function addPastedText(text) {
+  if (attachments.length >= 4) { toast('Up to 4 files at a time', true); return false; }
+  if (new TextEncoder().encode(text).length > 4.8 * 1048576) { toast('That text is too long to attach (limit about 4.8 MB)', true); return false; }
+  const cap = await loadAttachLimit();
+  attachments.push({ name: 'pasted-text-' + (++pasteCount) + '.txt', data: textToBase64(text), pasted: text });
+  renderChips();
+  toast(text.length > cap ? 'Pasted as a file. B.E.T.A. will read the first ' + cap.toLocaleString() + ' of ' + text.length.toLocaleString() + ' characters.' : 'Long text pasted as a file');
+  return true;
+}
+const isBigText = (t) => t.length >= PASTE_TEXT_MIN_CHARS || t.split('\n').length >= PASTE_TEXT_MIN_LINES;
+function insertAtCaret(text) {
+  const el = $('input'); const a = el.selectionStart || 0, b = el.selectionEnd || 0;
+  el.value = el.value.slice(0, a) + text + el.value.slice(b); el.selectionStart = el.selectionEnd = a + text.length; autosize();
+}
+async function pasteText(t) {                            // small text goes into the box, a big paste becomes a file chip
+  if (isBigText(t)) return addPastedText(t);
+  insertAtCaret(t); $('input').focus(); return true;
+}
+function handlePasteEvent(e, inBox) {
+  const cd = e.clipboardData; if (!cd) return;
+  let files = Array.from(cd.files || []).filter((f) => f.type && f.type.startsWith('image/'));
+  if (!files.length && cd.items) files = Array.from(cd.items).filter((it) => it.kind === 'file' && it.type.startsWith('image/')).map((it) => it.getAsFile()).filter(Boolean);
+  if (files.length) { e.preventDefault(); (async () => { for (const f of files) { if (!(await addPastedImage(f))) break; } })(); return; }
+  const text = cd.getData('text/plain') || '';
+  if (text && isBigText(text)) { e.preventDefault(); addPastedText(text); return; }       // small pastes behave as usual
+  if (!text && inBox) toast("Nothing to paste here. Some browsers can't paste pictures into the box - tap the clipboard button instead.", true);
+}
+$('input').addEventListener('paste', (e) => handlePasteEvent(e, true));
+// Ctrl+V when the cursor isn't in a box (desktop): still attaches the picture or long text
+document.addEventListener('paste', (e) => {
+  const t = e.target;
+  if (t === $('input') || (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable))) return;
+  if ($('app').classList.contains('hidden') || document.querySelector('.overlay:not(.hidden)')) return;
+  handlePasteEvent(e, false);
+});
+// Phone keyboards often send no paste event for pictures, so there is also a Paste button.
+// Firefox always shows its own small "Paste" bubble before a page may read the clipboard - that is Firefox's privacy rule
+// and a page cannot skip it (Chrome lets you allow clipboard access once).
+$('paste-btn').addEventListener('click', async () => {
+  if (/firefox|fxios|fennec/i.test(navigator.userAgent) && !pasteHinted) { pasteHinted = true; toast('Firefox asks first: tap the small "Paste" bubble that appears.'); }
+  const clip = navigator.clipboard;
+  let denied = false;
+  if (clip && clip.read) {
+    try {
+      const items = await clip.read(); let handled = false;
+      for (const it of items) {
+        const img = it.types.find((t) => t.startsWith('image/'));
+        if (img) { handled = true; await addPastedImage(new File([await it.getType(img)], 'pasted', { type: img })); continue; }
+        if (it.types.includes('text/plain')) { const t = await (await it.getType('text/plain')).text(); if (t) { handled = true; await pasteText(t); } }
+      }
+      if (handled) return;
+    } catch (e) { denied = !!e && (e.name === 'NotAllowedError' || e.name === 'SecurityError'); }
+  }
+  if (!denied && clip && clip.readText) {                 // read() missing, failed, or had nothing usable: try plain text
+    try {
+      const t = await clip.readText();
+      if (t) { await pasteText(t); return; }
+      toast('The clipboard is empty'); return;
+    } catch (e) { denied = !!e && (e.name === 'NotAllowedError' || e.name === 'SecurityError'); }
+  }
+  toast(denied ? 'Paste was not allowed. Tap the clipboard button again, then tap "Paste" on the bubble. Or long-press the message box and choose Paste.'
+               : "This browser won't let B.E.T.A. read the clipboard. Long-press the message box and choose Paste (for pictures, use the paperclip).", true);
+  $('input').focus();
+});
+let pasteViewing = null;
+function openPasteView(a) {
+  pasteViewing = a;
+  $('pasteview-body').textContent = a.pasted.length > 30000 ? a.pasted.slice(0, 30000) + '\n\n…(only the first 30,000 characters are shown here; all of it is attached)' : a.pasted;
+  show('pasteview');
+}
+$('pasteview-close').addEventListener('click', () => hide('pasteview'));
+$('pasteview-remove').addEventListener('click', () => { attachments = attachments.filter((q) => q !== pasteViewing); pasteViewing = null; renderChips(); hide('pasteview'); });
 
 // ---- "are you looking at B.E.T.A.?" - told to the server the moment it changes, so alerts fire reliably
 let lastPresence = null;
@@ -1672,8 +1991,21 @@ $('m-notify').addEventListener('click', async () => {
   refreshNotifyMenu();
 });
 
+function askConfirm(title, text, yesLabel) {
+  return new Promise((resolve) => {
+    $('confirm-title').textContent = title;
+    $('confirm-text').textContent = text;
+    $('confirm-yes').textContent = yesLabel || 'Yes';
+    const done = (v) => { hide('confirm'); $('confirm-yes').onclick = null; $('confirm-no').onclick = null; resolve(v); };
+    $('confirm-yes').onclick = () => done(true);
+    $('confirm-no').onclick = () => done(false);
+    show('confirm');
+  });
+}
 $('m-clear').addEventListener('click', async () => {
-  if (!confirm('Clear this conversation? Long-term memory is kept.')) return;
+  const ok = await askConfirm('Clear this conversation?',
+    "This deletes the whole chat from this phone and from the server, and it can't be undone. Your long-term memory is kept.", 'Yes, clear it');
+  if (!ok) return;
   try { await api('/api/clear', { method: 'POST' }); chat.innerHTML = ''; hide('menu'); toast('Conversation cleared'); }
   catch (e) { toast(e.message, true); }
 });

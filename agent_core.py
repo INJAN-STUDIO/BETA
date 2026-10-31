@@ -39,7 +39,44 @@ from openai import OpenAI
 MODEL = "gemini-3.1-flash-lite"
 FALLBACK_MODELS = ["gemini-3.5-flash-lite"]
 VISION_MODEL = "gemini-3.1-flash-lite"  # YouTube analysis - kept on the big-allowance model so it never eats the smart models' daily requests
-GROQ_MODEL = "openai/gpt-oss-120b"  # Groq's current recommended free-tier flagship (replaces the deprecated llama-3.3-70b-versatile) - text/tools only, no image support
+def _model_list(env_name, default):
+    raw = os.environ.get(env_name)
+    raw = default if raw is None else raw
+    out = []
+    for name in str(raw).split(","):
+        name = name.strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+# Groq's free tier gives every model its OWN daily and per-minute allowance, so a chain of models goes much further than
+# one. They are tried in this order, and a model that has hit its limit is skipped until it recovers. All are text/tools
+# only (no images). Change the order or the list with GROQ_MODELS (comma separated) - no code edit needed, which matters
+# because Groq retires and adds models. GROQ_EXTRA_MODELS are offered only in the menu's Model picker.
+GROQ_MODELS = _model_list("GROQ_MODELS", "openai/gpt-oss-120b,openai/gpt-oss-20b,llama-3.3-70b-versatile,llama-3.1-8b-instant") or ["openai/gpt-oss-120b"]
+GROQ_EXTRA_MODELS = [m for m in _model_list("GROQ_EXTRA_MODELS", "qwen/qwen3.6-27b") if m not in GROQ_MODELS]
+GROQ_MODEL = GROQ_MODELS[0]   # the first choice (kept under its old name for the rest of the code)
+
+# How much of an attached or pasted TEXT file the model reads. (It used to be a flat 10,000 characters, so a big paste was
+# silently cut.) Groq's free tier only allows ~8,000 tokens a minute, so on Groq the limit is much smaller.
+def _int_env(name, default):
+    try:
+        return max(1000, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+ATTACH_TEXT_CHARS = _int_env("ATTACH_TEXT_CHARS", 60000)
+ATTACH_TEXT_CHARS_GROQ = _int_env("ATTACH_TEXT_CHARS_GROQ", 12000)
+
+
+def clip_attachment_text(text, limit):
+    """Cuts attached text to `limit` characters and SAYS so, so neither Karachi nor the model assumes it saw it all."""
+    if len(text) <= limit:
+        return text
+    return (text[:limit] + "\n[...cut here: only the first %d of %d characters were read. Say so if the missing part matters.]"
+            % (limit, len(text)))
 MAX_ATTACHMENTS = 5  # sane ceiling per message - each image adds real token/quota weight, so this isn't just a UI nicety
 
 # Approximate usable context window per provider, for the context meter in
@@ -300,6 +337,8 @@ class Agent:
         self._api_key = api_key  # kept for the native google-genai client (video understanding isn't documented on the OpenAI-compat layer)
 
         self.active_provider = "gemini"  # or "groq" while Gemini's daily quota is exhausted
+        self._groq_cooldown = {}         # Groq model -> time.time() until which it is skipped (limit reached / retired)
+        self._groq_last = None           # the Groq model that answered last
         self._switch_reason = None  # "quota" or "overload" - set whenever active_provider flips to "groq"
         self.groq_client = None
         if groq_api_key:
@@ -792,7 +831,7 @@ class Agent:
             for table in document.tables:
                 for row in table.rows:
                     parts.append(" | ".join(cell.text for cell in row.cells))
-            return "\n".join(parts)[:10000]
+            return "\n".join(parts)
         except Exception as e:
             return f"[Error reading .docx file: {e}]"
 
@@ -909,7 +948,7 @@ class Agent:
                 filename = os.path.basename(path)
                 mime_type, _ = mimetypes.guess_type(path)
                 if mime_type == self.DOCX_MIME:
-                    doc_text = self._extract_docx_text(path)
+                    doc_text = clip_attachment_text(self._extract_docx_text(path), self._attach_limit())
                     content[0]["text"] += (
                         f"\n\n--- Attached file: {filename} ---\n"
                         f"{doc_text}\n--- End of {filename} ---"
@@ -921,7 +960,7 @@ class Agent:
                     # an image the model can't actually understand.
                     try:
                         with open(os.path.expanduser(path), "r", errors="replace") as f:
-                            file_text = f.read()[:10000]
+                            file_text = clip_attachment_text(f.read(), self._attach_limit())
                         content[0]["text"] += (
                             f"\n\n--- Attached file: {filename} ---\n"
                             f"{file_text}\n--- End of {filename} ---"
@@ -966,7 +1005,12 @@ class Agent:
             if self.on_model_update:
                 self.on_model_update(self.active_provider, model_id)
 
-            USAGE.record(model_id)  # one successful request against this model's daily quota
+            try:
+                USAGE.record(model_id)  # one successful request against this model's daily quota
+            except Exception:
+                pass                    # a model without a configured daily limit (e.g. the extra Groq ones) must never break a reply
+            if self.active_provider == "groq":
+                self._groq_last = model_id
             self._notify_usage()
 
             msg = response.choices[0].message
@@ -1011,14 +1055,20 @@ class Agent:
         """Everything the GUI's requests-left meter needs, in one dict."""
         chain = [MODEL] + FALLBACK_MODELS
         if self.active_provider == "groq" and self.groq_client:
-            provider, active = "groq", GROQ_MODEL
+            provider, active = "groq", (self._groq_last or self._groq_models_now()[0])
         else:
             # The model the NEXT request will go to: first one with quota left.
             provider = "gemini"
             active = next((m for m in chain if not USAGE.is_exhausted(m)), chain[-1])
         models = [dict(USAGE.entry(m), provider="gemini") for m in chain]
         if self.groq_client:
-            models.append(dict(USAGE.entry(GROQ_MODEL), provider="groq"))
+            for gm in GROQ_MODELS:
+                try:
+                    row = dict(USAGE.entry(gm))
+                except Exception:
+                    row = {"limit": None, "used": 0}
+                row.update(provider="groq", model=gm)
+                models.append(row)
         return {
             "provider": provider,
             "active": active,
@@ -1026,6 +1076,7 @@ class Agent:
             "resets_in": USAGE.seconds_until_reset(),
             "groq": bool(self.groq_client),        # is the backup model switched on (GROQ_API_KEY set)?
             "groq_model": GROQ_MODEL,
+            "groq_models": list(GROQ_MODELS),
         }
 
     def _notify_usage(self):
@@ -1037,8 +1088,50 @@ class Agent:
 
     def _current_client_and_models(self):
         if self.active_provider == "groq" and self.groq_client:
-            return self.groq_client, [GROQ_MODEL]
+            return self.groq_client, self._groq_models_now()
         return self.client, [MODEL] + FALLBACK_MODELS
+
+    # ---- the Groq chain: several free models, each with its own limits ----
+    def _attach_limit(self):
+        return ATTACH_TEXT_CHARS_GROQ if self.active_provider == "groq" else ATTACH_TEXT_CHARS
+
+    def _groq_models_now(self):
+        """The Groq models worth trying right now, in order: the ones that hit a limit are skipped until they recover.
+        If every one is cooling down, try them all anyway rather than fail."""
+        now = time.time()
+        live = [m for m in GROQ_MODELS if self._groq_cooldown.get(m, 0) <= now]
+        return live or list(GROQ_MODELS)
+
+    @staticmethod
+    def _groq_retry_seconds(text):
+        """'Please try again in 9m20.7s' / '340ms' -> seconds, or None."""
+        m = re.search(r"try again in ([0-9hms.]+)", text.lower())
+        if not m:
+            return None
+        total, found = 0.0, False
+        for number, unit in re.findall(r"([0-9.]+)(ms|h|m|s)", m.group(1)):
+            try:
+                value = float(number)
+            except ValueError:
+                continue
+            found = True
+            total += value * {"h": 3600, "m": 60, "s": 1, "ms": 0.001}[unit]
+        return total if found else None
+
+    def _note_groq_failure(self, model_id, text):
+        """Remember WHY a Groq model failed, so the next request goes straight to one that can answer."""
+        low = text.lower()
+        wait = None
+        if "429" in text or "rate limit" in low or "rate_limit" in low:
+            seconds = self._groq_retry_seconds(text)
+            per_day = "per day" in low or "(tpd)" in low or "(rpd)" in low
+            wait = seconds if seconds else (3600 if per_day else 30)
+            wait = min(max(wait, 5), 24 * 3600)
+        elif any(w in low for w in ("decommission", "model_not_found", "does not exist", "no longer supported", "not found")):
+            wait = 6 * 3600            # retired or misspelled: don't ask again for hours
+        if wait:
+            self._groq_cooldown[model_id] = time.time() + wait
+            print("[B.E.T.A.] Groq %s skipped for %d s: %s" % (model_id, wait, text[:140].replace("\n", " ")))
 
     # Groq's free/on_demand tier throttles at 8,000 tokens/minute TOTAL
     # (input + output combined) - far below what a real conversation with
@@ -1080,6 +1173,11 @@ class Agent:
                         USAGE.mark_exhausted(model_id)
                         self._notify_usage()
                         break
+                    if self.active_provider == "groq":
+                        self._note_groq_failure(model_id, text)
+                        if model_id != models_to_try[-1]:
+                            errors.append(f"[{model_id}] {e}")
+                            break          # the next Groq model has its own limits - go straight to it
                     wait_seconds = self._extract_retry_delay(text)
                     if wait_seconds is not None and wait_seconds <= 30 and attempt < 2:
                         # A short, genuinely temporary rate limit - worth

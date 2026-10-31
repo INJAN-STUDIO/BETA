@@ -1,0 +1,28 @@
+{
+  "name": "beta-cloud",
+  "version": "1.0.0",
+  "description": "Release number is now 2.9 in beta-cloud/app.py (phones refresh themselves when it changes).",
+  "main": "app.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/INJAN-STUDIO/BETA.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/INJAN-STUDIO/BETA/issues"
+  },
+  "homepage": "https://github.com/INJAN-STUDIO/BETA#readme",
+  "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
+    "@capacitor/core": "^8.6.0"
+  }
+}

@@ -8,6 +8,8 @@ B.E.T.A.'s side of the K-10 Network (see k10_core.py).
   * A small background check looks for new mail every 45 seconds and calls on_new() so you get an alert.
     (Render's free server sleeps when idle; mail simply waits and is picked up when it wakes. ALPHA pings the server
     after sending to wake it.)
+  * K-10 can never hold up the server: k10_link.Link connects in the background with a hard deadline, switches K-10
+    off if it doesn't answer, keeps retrying by itself, and status() is instant. See k10_link.py.
 """
 
 import os
@@ -16,41 +18,72 @@ import time
 import uuid
 
 import k10_core
+import k10_link
 
 APPROVE_TIMEOUT = 150
-POLL_SECONDS = 45
 
 _lock = threading.Lock()
 _drafts = {}
-_mailbox = None
-_notified = set()
-_poller_started = False
 on_new = None                  # app.py sets this: called with a summary dict when new mail arrives
 
 
+def _on_poll(new, fresh):
+    for m in fresh:
+        if on_new:
+            try:
+                on_new(m)
+            except Exception as e:
+                k10_core.log("beta: new-mail alert failed (%s)." % type(e).__name__)
+
+
+# Mail that arrived while the server slept is announced if it is under 2 hours old; older mail only shows in the badge.
+LINK = k10_link.Link("beta", on_poll=_on_poll, first_poll_window=2 * 3600)
+
+
 def enabled():
-    return bool(os.environ.get("K10_KEY", "").strip() and os.environ.get("SUPABASE_URL", "").strip()
-                and os.environ.get("SUPABASE_KEY", "").strip())
+    """K-10 is configured (all three settings present). It may still be reconnecting - see ready() / status()."""
+    return LINK.configured()
+
+
+def ready():
+    return LINK.ready()
+
+
+def status():
+    return LINK.status()
+
+
+def not_ready_message():
+    return LINK.not_ready_message()
+
+
+def kick():
+    LINK.kick()
+
+
+def note_error(exc):
+    LINK.report_error(exc)
+
+
+def note_ok():
+    LINK.report_ok()
 
 
 def mailbox():
-    global _mailbox
-    with _lock:
-        if _mailbox is None:
-            _mailbox = k10_core.from_env("beta")
-        return _mailbox
+    return LINK.mailbox()
 
 
 def set_mailbox(mb):                       # for tests
-    global _mailbox
-    with _lock:
-        _mailbox = mb
+    LINK.set_mailbox(mb)
 
 
 def request_send(to, subject, body, attach_name, attach_text, explanation, emit):
     """Runs on the AI's thread. Returns the text the AI sees as the tool result."""
     if not enabled():
         return "K-10 isn't set up on the server (K10_KEY is missing)."
+    if not ready():
+        return ("K-10 mail can't be used right now: %s Tell Karachi, and try again later - don't draft the mail again "
+                "until he says it is back." % not_ready_message())
     to = str(to or "alpha").strip().lower()
     if to != "alpha":
         return "You can only send K-10 mail to ALPHA."
@@ -81,11 +114,14 @@ def request_send(to, subject, body, attach_name, attach_text, explanation, emit)
         # What is sent is exactly what the card showed: the body may only be cut at 6000 for display, so send the original.
         msg_id = mailbox().send("alpha", subject, body, attachment)
     except k10_core.K10Error as e:
+        note_error(e)
+        k10_core.log("beta: send failed: %s" % (getattr(e, "detail", "") or e))
         emit({"kind": "k10_result", "id": draft["id"], "status": "failed", "detail": str(e)})
         return "The mail couldn't be sent: %s" % e
     except Exception as e:
+        k10_core.log("beta: send failed: %s" % type(e).__name__)
         emit({"kind": "k10_result", "id": draft["id"], "status": "failed", "detail": "network problem"})
-        return "The mail couldn't be sent (network problem): %s" % str(e)[:120]
+        return "The mail couldn't be sent (network problem): %s" % type(e).__name__
     emit({"kind": "k10_result", "id": draft["id"], "status": "sent"})
     return "Sent to ALPHA through K-10 (id %s) after Karachi approved it." % msg_id
 
@@ -109,48 +145,6 @@ def cancel_all():
             d["decided"].set()
 
 
-def check_new():
-    """Look for unseen mail from ALPHA and announce each one once. Returns the number announced."""
-    if not enabled():
-        return 0
-    n = 0
-    for m in mailbox().inbox(limit=20):
-        if m.get("state") != "new" or m["id"] in _notified:
-            continue
-        _notified.add(m["id"])
-        n += 1
-        if on_new:
-            try:
-                on_new(m)
-            except Exception:
-                pass
-    return n
-
-
 def start_poller():
-    """Starts the background check once. Mail already waiting a while ago is not announced again after a restart."""
-    global _poller_started
-    if _poller_started or not enabled():
-        return
-    _poller_started = True
-
-    def loop():
-        try:
-            cutoff = int((time.time() - 2 * 3600) * 1000)
-            for m in mailbox().inbox(limit=50):
-                if m.get("ts", 0) < cutoff or m.get("state") != "new":
-                    _notified.add(m["id"])
-        except Exception:
-            pass
-        purge_at = 0.0
-        while True:
-            time.sleep(POLL_SECONDS)
-            try:
-                check_new()
-                if time.time() > purge_at:
-                    mailbox().purge_old()
-                    purge_at = time.time() + 6 * 3600
-            except Exception as e:
-                print("[B.E.T.A.] K-10 check failed:", repr(e)[:160])
-
-    threading.Thread(target=loop, daemon=True).start()
+    """Starts K-10 in the background and returns immediately - it never waits for the network. Safe to call twice."""
+    LINK.start()
