@@ -105,6 +105,13 @@ MAX_REMEMBERED_MESSAGES = 40
 # dispatch, so a hallucinated call to a removed tool still can't run.
 ALLOWED_TOOLS = None
 
+PROMPT_PROVIDER = None   # B.E.T.A. sets this: a function returning the system prompt for the account being served
+
+
+def current_prompt():
+    return PROMPT_PROVIDER() if PROMPT_PROVIDER else SYSTEM_PROMPT
+
+
 SYSTEM_PROMPT = """You are A.L.P.H.A which stands for Advanced Learning Platform and Hybrid Assistant, model 9 in an ongoing personal assistant
 lineage, running directly on the user's Linux machine. The user is
 running Fedora (KDE Plasma) on a Dell Latitude E5440 laptop with 8gb ram and has a Huawei Honor 8x phone with 6gb ram you are to refer to the user as "Karachi".
@@ -282,14 +289,14 @@ def load_memory():
                 messages = json.load(f)
         except json.JSONDecodeError:
             os.rename(MEMORY_FILE, MEMORY_FILE + ".corrupted")
-            return [{"role": "system", "content": SYSTEM_PROMPT}]
+            return [{"role": "system", "content": current_prompt()}]
 
         # HEALING: Validate structure on load
         cleaned = AIRIS.heal_history(messages)
         if not cleaned or cleaned[0].get("role") != "system":
-            cleaned.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+            cleaned.insert(0, {"role": "system", "content": current_prompt()})
         return cleaned
-    return [{"role": "system", "content": SYSTEM_PROMPT}]
+    return [{"role": "system", "content": current_prompt()}]
 
 def save_memory(messages):
     # HEALING: Validate structure before saving
@@ -563,7 +570,7 @@ class Agent:
             except Exception as e:
                 print(f"[ALPHA] Could not show image gallery: {e}")
 
-        lines = [f"Showed {len(tiles)} photo(s) for \"{query}\" to Karachi in a gallery in the chat."]
+        lines = [f"Showed {len(tiles)} photo(s) for \"{query}\" to the user in a gallery in the chat."]
         if blur:
             lines.append(f"They are BLURRED until he clicks each one, with this note on every image: \"{reason}\". "
                          "Tell him briefly in your reply that they're blurred and why, so he can decide whether to open them.")
@@ -590,7 +597,7 @@ class Agent:
         try:
             images, label, usage_key = image_gen.generate_any(prompt, aspect_ratio, os.environ, self._api_key)
         except image_gen.ImageGenError as e:
-            return "Image generation failed: " + e.user_message + " (Tell Karachi this plainly; don't retry in a loop.)"
+            return "Image generation failed: " + e.user_message + " (Tell the user this plainly; don't retry in a loop.)"
         except Exception as e:
             return f"Image generation error: {e}"
         tiles = []
@@ -609,7 +616,7 @@ class Agent:
                 self._current_on_images(payload)
             except Exception as e:
                 print(f"[ALPHA] Could not show generated image: {e}")
-        return ("Generated %d image(s) with %s and showed them to Karachi in the chat (he can tap to open full size or save). "
+        return ("Generated %d image(s) with %s and showed them to the user in the chat (they can tap to open full size or save). "
                 "Say in one short line what you made, and offer a tweak. Do not describe pixels you can't see, and do not mention file data."
                 % (len(tiles), label))
 
@@ -631,7 +638,7 @@ class Agent:
         except Exception as e:
             return f"Video search error: {e}"
         if not cards:
-            return "Found videos, but none of them allow playing inside another app (the owners turned embedding off). Offer Karachi the search words or a different video."
+            return "Found videos, but none of them allow playing inside another app (the owners turned embedding off). Offer the user the search words or a different video."
         blur, reason = image_search.decide_blur(query, sensitive, warning)
         payload = {"kind": "videos", "query": query, "blurred": blur, "reason": reason, "videos": cards}
         if self._current_on_images:
@@ -639,7 +646,7 @@ class Agent:
                 self._current_on_images(payload)
             except Exception as e:
                 print(f"[ALPHA] Could not show videos: {e}")
-        lines = [f"Showed {len(cards)} video(s) for \"{query}\" in the chat as playable cards - Karachi taps Play and it plays right there."]
+        lines = [f"Showed {len(cards)} video(s) for \"{query}\" in the chat as playable cards - the user taps Play and it plays right there."]
         if blur:
             lines.append(f"The thumbnails are BLURRED until he taps them, with this note: \"{reason}\". Tell him briefly why.")
         lines.append("Videos: " + "; ".join(f"{c['title']} ({c['channel'] or 'unknown channel'}{', ' + c['duration'] if c['duration'] else ''})" for c in cards))
@@ -893,7 +900,7 @@ class Agent:
         return f"Running {func_name}"
 
     def _refresh_system_prompt(self):
-        system_msg = {"role": "system", "content": SYSTEM_PROMPT}
+        system_msg = {"role": "system", "content": current_prompt()}
         if self.messages and self.messages[0].get("role") == "system":
             self.messages[0] = system_msg
         else:

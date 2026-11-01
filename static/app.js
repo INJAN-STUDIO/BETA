@@ -25,6 +25,8 @@ const ICONS = {
   bookmark: '<path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',
   logout: '<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>',
+  users: '<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>',
+  key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2M16 7l3 3"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
   check: '<path d="M20 6L9 17l-5-5"/>',
   alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>',
@@ -74,6 +76,7 @@ async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     const err = new Error((data && data.error) || `Request failed (${res.status})`);
     err.status = res.status;
+    err.data = data;                                   // e.g. {errors: {code: '...'}} from /api/join
     throw err;
   }
   return data;
@@ -736,22 +739,34 @@ function addGenerated(p) {
 }
 
 function updateUsage(s) {
-  if (!s || !s.models || !s.models.length) return;
+  if (!s) return;
+  if (!s.models || !s.models.length) {
+    if (!s.allowance) return;
+    s = Object.assign({}, s, { models: [{ model: '', limit: null, used: 0 }] });
+  }
   // The model order, spelled out in the menu - including whether the Groq backup is switched on.
   if (s.groq !== undefined) {
-    const short = (m) => m.replace(/^gemini-/, '').replace(/^openai\//, '');
+    const short = shortModel;
     const gem = s.models.filter((m) => m.provider !== 'groq').map((m) => short(m.model));
+    const groqList = (s.groq_models && s.groq_models.length ? s.groq_models : [s.groq_model || 'groq']).map(short);
     $('m-models').textContent = 'Models in order: ' + gem.join(' → ') + ' → ' +
-      (s.groq ? 'Groq (' + short(s.groq_model || 'groq') + ') ready' : 'Groq: not switched on (no GROQ_API_KEY on the server)');
+      (s.groq ? 'Groq (' + groqList.join(' → ') + ') ready' : 'Groq: not switched on (no GROQ_API_KEY on the server)');
   }
   const e = s.models.find((m) => m.model === s.active) || s.models[0];
-  const name = e.model.replace(/^gemini-/, '').replace(/^openai\//, '');
+  const name = shortModel(e.model);
   $('usage-label').textContent = e.limit == null ? `${name} · ${e.used} used` : `${name} · ${e.remaining}/${e.limit} left`;
   const pct = e.limit ? Math.max(0, Math.min(100, (e.remaining / e.limit) * 100)) : 100;
   $('usage-fill').style.width = pct + '%';
   $('usage-fill').classList.toggle('low', pct <= 20);
   const secs = s.resets_in || 0, h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
   $('usage-reset').textContent = secs ? `resets ${h ? h + 'h ' : ''}${m}m` : '';
+  if (s.allowance) {                                  // friends see their own daily allowance instead of the model quota
+    const a = s.allowance, apct = a.own_key ? 100 : (a.limit ? Math.max(0, Math.min(100, (a.left / a.limit) * 100)) : 0);
+    $('usage-label').textContent = a.own_key ? 'Using your own key · no daily limit' : `Daily allowance · ${a.left}/${a.limit} left`;
+    $('usage-fill').style.width = apct + '%';
+    $('usage-fill').classList.toggle('low', !a.own_key && apct <= 20);
+    $('usage-reset').textContent = '';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -946,17 +961,7 @@ function autosize() {
   t.style.height = Math.min(t.scrollHeight, 120) + 'px';
 }
 $('input').addEventListener('input', autosize);
-// Enter sends; Shift+Enter makes a new line. Phone keyboards often don't report a normal
-// Enter keydown, so the "insertLineBreak" input event is caught too.
-let shiftDown = false;
-$('input').addEventListener('keydown', (e) => {
-  shiftDown = e.shiftKey;
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
-});
-$('input').addEventListener('keyup', (e) => { shiftDown = e.shiftKey; });
-$('input').addEventListener('beforeinput', (e) => {
-  if ((e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') && !shiftDown) { e.preventDefault(); send(); }
-});
+// Enter makes a new line (it no longer sends). Messages are sent with the send button only.
 
 let pendingVideos = [];     // {name, size, id, pct, xhr}
 function renderChips() {
@@ -967,7 +972,8 @@ function renderChips() {
     const chip = document.createElement('span'); chip.className = 'chip';
     const n = document.createElement('span'); n.className = 'name'; n.textContent = a.name;
     if (a.pasted) {
-      n.textContent = '📋 Pasted text · ' + a.pasted.length.toLocaleString() + ' characters';
+      n.textContent = '📋 Pasted text · ' + a.pasted.length.toLocaleString() + ' characters' +
+        (attachCharLimit && a.pasted.length > attachCharLimit ? ' · first ' + attachCharLimit.toLocaleString() + ' will be read' : '');
       n.style.cursor = 'pointer'; n.addEventListener('click', () => openPasteView(a));
     }
     chip.appendChild(n);
@@ -1035,14 +1041,25 @@ function loadBitmap(file) {
   if (!window.createImageBitmap) return viaImage();
   return createImageBitmap(file).catch(viaImage);
 }
+// Pictures are shrunk before upload. 2048 px keeps small text in a phone screenshot readable (1280 px halved it), a white
+// background goes behind transparent PNGs (JPEG would turn them black), and the result stays well under the server's 5 MB.
 async function shrinkImage(file) {
   const bmp = await loadBitmap(file);
   const bw = bmp.naturalWidth || bmp.width, bh = bmp.naturalHeight || bmp.height;
-  const scale = Math.min(1, 1280 / Math.max(bw, bh));
-  const c = document.createElement('canvas');
-  c.width = Math.round(bw * scale); c.height = Math.round(bh * scale);
-  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-  return c.toDataURL('image/jpeg', 0.82).split(',')[1];
+  let side = 2048, quality = 0.86, data = '';
+  for (let i = 0; i < 4; i++) {
+    const scale = Math.min(1, side / Math.max(bw, bh));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bw * scale)); c.height = Math.max(1, Math.round(bh * scale));
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    data = c.toDataURL('image/jpeg', quality).split(',')[1];
+    if (data.length * 0.75 <= 3.5 * 1048576) break;
+    side = Math.round(side * 0.75); quality = Math.max(0.6, quality - 0.08);
+  }
+  if (bmp.close) bmp.close();
+  return data;
 }
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
   const r = new FileReader();
@@ -1074,7 +1091,7 @@ function setBusy(on) {
   btn.setAttribute('aria-label', on ? 'Stop' : 'Send');
   $('state-label').textContent = on ? 'thinking…' : 'ready';
   document.querySelector('.brand .blob').classList.toggle('thinking', on);
-  if (!on) { $('activity').classList.add('hidden'); hideThinking(); }
+  if (!on) { stopCooldown(); $('activity').classList.add('hidden'); hideThinking(); }
 }
 
 async function send() {
@@ -1116,9 +1133,29 @@ async function send() {
   }
 }
 
+// A rate-limit wait used to show a frozen number ("waiting 20s" stayed on 20). Now it counts down every second.
+let cooldownTimer = null, cooldownEnd = 0;
+function stopCooldown() { if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null; } }
+function startCooldown(seconds) {
+  stopCooldown();
+  cooldownEnd = Date.now() + seconds * 1000;
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((cooldownEnd - Date.now()) / 1000));
+    $('activity-text').textContent = left > 0 ? 'Rate limit hit - resuming in ' + left + 's…' : 'Resuming…';
+    if (left <= 0) stopCooldown();
+  };
+  $('activity').classList.remove('hidden');
+  tick();
+  cooldownTimer = setInterval(tick, 250);
+}
+
 function handleEvent(ev) {
   hideThinking();
-  if (ev.type === 'activity') { $('activity-text').textContent = ev.text; $('activity').classList.remove('hidden'); }
+  if (ev.type === 'activity') {
+    const wait = /waiting\s+(\d+(?:\.\d+)?)\s*s\b/i.exec(ev.text || '');
+    if (wait) startCooldown(parseFloat(wait[1]));
+    else { stopCooldown(); $('activity-text').textContent = ev.text; $('activity').classList.remove('hidden'); }
+  }
   else if (ev.type === 'images') {
     const p = ev.payload || {};
     if (p.kind === 'videos') addVideos(p);
@@ -1132,6 +1169,7 @@ function handleEvent(ev) {
     else addGallery(p);
   }
   else if (ev.type === 'reply') {
+    stopCooldown();
     $('activity').classList.add('hidden');
     const bubble = addMessage('ai', ev.text, true);
     if (voiceOn) speak(ev.text, bubble.querySelector('.listen-btn'));
@@ -1193,6 +1231,7 @@ $('m-size').addEventListener('click', () => { sizeIdx = (sizeIdx + 1) % TEXT_SIZ
 applyTextSize();
 
 // ---- theme: logo colours (dark / light) or classic (ALPHA's original dark / light) ----
+let ME = null;          // the account that is logged in (see applyAccount)
 const THEMES = [
   { id: 'icon-dark', name: 'Logo colours · Dark', bar: '#051a22', icon: 'palette', kind: 'dark', sw: ["#051a22", "#35b6d5", "#7fe3ee"] },
   { id: 'icon-light', name: 'Logo colours · Light', bar: '#e8f5f8', icon: 'palette', kind: 'light', sw: ["#e8f5f8", "#0e6e9e", "#0b6a96"] },
@@ -1216,11 +1255,13 @@ function applyTheme() {
   $('m-theme-text').textContent = 'Theme: ' + t.name;
   setIcon($('m-theme-icon'), t.icon);
 }
-function setTheme(id) {
+function setTheme(id, persist) {
   const i = THEMES.findIndex((t) => t.id === id);
   if (i < 0) return;
   themeIdx = i;
   store.set('beta_theme', THEMES[themeIdx].id);
+  // Saved to the account too, so it follows you to any device and never changes anybody else's theme.
+  if (persist !== false && ME) api('/api/prefs', { method: 'POST', body: { theme: id } }).catch(() => {});
   const root = document.documentElement;
   root.classList.add('theme-anim'); setTimeout(() => root.classList.remove('theme-anim'), 450);   // smooth cross-fade
   applyTheme();
@@ -1566,7 +1607,7 @@ function addK10Result(p) {
 }
 
 // ---- choose the model by hand
-const shortModel = (m) => String(m || '').replace(/^gemini-/, '').replace(/^openai\//, '');
+const shortModel = (m) => String(m || '').replace(/^groq:/, '').replace(/^gemini-/, '').replace(/^[^/]+\//, '');
 async function refreshModelMenu() {
   try {
     const d = await api('/api/models');
@@ -1580,13 +1621,20 @@ async function openModels() {
   if (!d) { body.textContent = "Couldn't load the models. Try again."; return; }
   body.textContent = '';
   const rows = [{ id: 'auto', title: 'Automatic (recommended)', sub: 'B.E.T.A. uses the best model that still has quota left and switches by itself.', on: !d.forced }];
-  let extraHeader = false;
+  let extraHeader = false, groqHeader = false;
+  const groqNames = d.models.filter((m) => m.provider === 'groq' && !m.groq_extra).map((m) => shortModel(m.model));
   d.models.forEach((m) => {
     const isGroq = m.provider === 'groq';
     if (m.extra && !extraHeader) { extraHeader = true; rows.push({ header: 'Smarter models - for coding and hard problems. Used only when you pick them.' }); }
-    rows.push({ id: isGroq ? 'groq' : m.model, title: shortModel(m.model) + (isGroq ? ' (Groq backup)' : ''),
+    if (isGroq && !groqHeader) {
+      groqHeader = true;
+      rows.push({ header: 'Groq - free backups. Each model has its own daily limit, and B.E.T.A. skips one that has run out.' });
+      rows.push({ id: 'groq', title: 'Groq - automatic order', sub: groqNames.join(' → '), on: d.forced === 'groq' });
+    }
+    const id = isGroq ? 'groq:' + m.model : m.model;
+    rows.push({ id, title: shortModel(m.model) + (m.groq_extra ? ' (preview)' : ''),
       sub: m.limit == null ? m.used + ' used today' : (m.remaining <= 0 ? 'used up for today' : m.remaining + ' of ' + m.limit + ' left today'),
-      on: d.forced === (isGroq ? 'groq' : m.model) });
+      on: d.forced === id });
   });
   rows.forEach((r) => {
     if (r.header) { body.appendChild(cardLabel(r.header)); return; }
@@ -1650,7 +1698,7 @@ async function refreshK10Menu() {
     const d = await api('/api/k10/info');
     if (!d.enabled) { item.classList.add('hidden'); return; }
     item.classList.remove('hidden');
-    $('m-k10-text').textContent = 'K-10 mail' + (d.new ? ' (' + d.new + ' new)' : '');
+    $('m-k10-text').textContent = 'K-10 mail' + (d.ready === false ? ' (reconnecting…)' : (d.new ? ' (' + d.new + ' new)' : ''));
   } catch (e) { item.classList.add('hidden'); }
 }
 function k10Time(ts) { return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
@@ -1669,7 +1717,12 @@ async function k10Tab(tab) {
       if (m.preview) { const s3 = document.createElement('div'); s3.className = 'k10-prev'; s3.textContent = m.preview; b.appendChild(s3); }
       b.addEventListener('click', () => k10Open(m.id, tab)); body.appendChild(b);
     });
-  } catch (e) { body.textContent = e.message || "Couldn't open the mailbox."; }
+  } catch (e) {
+    body.textContent = (e.message || "Couldn't open the mailbox.") + ' ';
+    const retry = document.createElement('button'); retry.className = 'fc-btn'; retry.textContent = 'Try again now';
+    retry.addEventListener('click', async () => { retry.disabled = true; try { await api('/api/k10/retry', { method: 'POST', body: {} }); } catch (err) { /* ignore */ } setTimeout(() => k10Tab(tab), 2500); });
+    body.appendChild(document.createElement('br')); body.appendChild(retry);
+  }
 }
 async function k10Open(id, tab) {
   const body = $('k10-body'); body.textContent = 'Loading…';
@@ -1782,7 +1835,12 @@ $('help-close').addEventListener('click', () => hide('help'));
 // ---- paste: a picture from the clipboard becomes an attachment, and a big paste of text becomes a file chip
 // (like attaching a text file) instead of filling the whole message box
 const PASTE_TEXT_MIN_CHARS = 1500, PASTE_TEXT_MIN_LINES = 20;
-let pasteCount = 0;
+let pasteCount = 0, attachCharLimit = null, pasteHinted = false;
+async function loadAttachLimit() {                       // how much attached text the AI reads (set on the server)
+  if (attachCharLimit) return attachCharLimit;
+  try { attachCharLimit = (await api('/api/capabilities')).attach_chars || 60000; } catch (e) { attachCharLimit = 60000; }
+  return attachCharLimit;
+}
 function textToBase64(t) {
   const bytes = new TextEncoder().encode(t); let bin = ''; const step = 0x8000;
   for (let i = 0; i < bytes.length; i += step) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
@@ -1790,51 +1848,72 @@ function textToBase64(t) {
 }
 async function addPastedImage(file) {
   if (attachments.length >= 4) { toast('Up to 4 files at a time', true); return false; }
-  try { attachments.push({ name: 'pasted-image-' + (++pasteCount) + '.jpg', data: await shrinkImage(file) }); renderChips(); return true; }
+  try { attachments.push({ name: 'pasted-image-' + (++pasteCount) + '.jpg', data: await shrinkImage(file) }); renderChips(); toast('Picture pasted'); return true; }
   catch (e) { toast(e.message || "Couldn't use that picture", true); return false; }
 }
-function addPastedText(text) {
+async function addPastedText(text) {
   if (attachments.length >= 4) { toast('Up to 4 files at a time', true); return false; }
-  if (text.length > 4000000) { toast('That text is too long to attach (limit about 4 MB)', true); return false; }
+  if (new TextEncoder().encode(text).length > 4.8 * 1048576) { toast('That text is too long to attach (limit about 4.8 MB)', true); return false; }
+  const cap = await loadAttachLimit();
   attachments.push({ name: 'pasted-text-' + (++pasteCount) + '.txt', data: textToBase64(text), pasted: text });
-  renderChips(); return true;
+  renderChips();
+  toast(text.length > cap ? 'Pasted as a file. B.E.T.A. will read the first ' + cap.toLocaleString() + ' of ' + text.length.toLocaleString() + ' characters.' : 'Long text pasted as a file');
+  return true;
 }
 const isBigText = (t) => t.length >= PASTE_TEXT_MIN_CHARS || t.split('\n').length >= PASTE_TEXT_MIN_LINES;
 function insertAtCaret(text) {
   const el = $('input'); const a = el.selectionStart || 0, b = el.selectionEnd || 0;
   el.value = el.value.slice(0, a) + text + el.value.slice(b); el.selectionStart = el.selectionEnd = a + text.length; autosize();
 }
-$('input').addEventListener('paste', async (e) => {
+async function pasteText(t) {                            // small text goes into the box, a big paste becomes a file chip
+  if (isBigText(t)) return addPastedText(t);
+  insertAtCaret(t); $('input').focus(); return true;
+}
+function handlePasteEvent(e, inBox) {
   const cd = e.clipboardData; if (!cd) return;
   let files = Array.from(cd.files || []).filter((f) => f.type && f.type.startsWith('image/'));
   if (!files.length && cd.items) files = Array.from(cd.items).filter((it) => it.kind === 'file' && it.type.startsWith('image/')).map((it) => it.getAsFile()).filter(Boolean);
-  if (files.length) { e.preventDefault(); for (const f of files) { if (!(await addPastedImage(f))) break; } return; }
+  if (files.length) { e.preventDefault(); (async () => { for (const f of files) { if (!(await addPastedImage(f))) break; } })(); return; }
   const text = cd.getData('text/plain') || '';
-  if (text && isBigText(text)) { e.preventDefault(); addPastedText(text); }            // small pastes behave as usual
+  if (text && isBigText(text)) { e.preventDefault(); addPastedText(text); return; }       // small pastes behave as usual
+  if (!text && inBox) toast("Nothing to paste here. Some browsers can't paste pictures into the box - tap the clipboard button instead.", true);
+}
+$('input').addEventListener('paste', (e) => handlePasteEvent(e, true));
+// Ctrl+V when the cursor isn't in a box (desktop): still attaches the picture or long text
+document.addEventListener('paste', (e) => {
+  const t = e.target;
+  if (t === $('input') || (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable))) return;
+  if ($('app').classList.contains('hidden') || document.querySelector('.overlay:not(.hidden)')) return;
+  handlePasteEvent(e, false);
 });
-// Some phone keyboards and browsers don't send a paste event for pictures, so there is also a Paste button.
+// Phone keyboards often send no paste event for pictures, so there is also a Paste button.
+// Firefox always shows its own small "Paste" bubble before a page may read the clipboard - that is Firefox's privacy rule
+// and a page cannot skip it (Chrome lets you allow clipboard access once).
 $('paste-btn').addEventListener('click', async () => {
-  try {
-    if (navigator.clipboard && navigator.clipboard.read) {
-      const items = await navigator.clipboard.read(); let did = false;
+  if (/firefox|fxios|fennec/i.test(navigator.userAgent) && !pasteHinted) { pasteHinted = true; toast('Firefox asks first: tap the small "Paste" bubble that appears.'); }
+  const clip = navigator.clipboard;
+  let denied = false;
+  if (clip && clip.read) {
+    try {
+      const items = await clip.read(); let handled = false;
       for (const it of items) {
         const img = it.types.find((t) => t.startsWith('image/'));
-        if (img) { did = (await addPastedImage(new File([await it.getType(img)], 'pasted.png', { type: img }))) || did; continue; }
-        if (it.types.includes('text/plain')) { const t = await (await it.getType('text/plain')).text(); if (t) { isBigText(t) ? addPastedText(t) : insertAtCaret(t); did = true; } }
+        if (img) { handled = true; await addPastedImage(new File([await it.getType(img)], 'pasted', { type: img })); continue; }
+        if (it.types.includes('text/plain')) { const t = await (await it.getType('text/plain')).text(); if (t) { handled = true; await pasteText(t); } }
       }
-      if (did) return;
-      toast('The clipboard is empty');
-      return;
-    }
-    if (navigator.clipboard && navigator.clipboard.readText) {
-      const t = await navigator.clipboard.readText();
-      if (t) { isBigText(t) ? addPastedText(t) : insertAtCaret(t); return; }
-      toast('The clipboard is empty'); return;
-    }
-    throw new Error('unsupported');
-  } catch (e) {
-    toast("Your browser wouldn't let B.E.T.A. read the clipboard. Long-press inside the message box and choose Paste instead.", true);
+      if (handled) return;
+    } catch (e) { denied = !!e && (e.name === 'NotAllowedError' || e.name === 'SecurityError'); }
   }
+  if (!denied && clip && clip.readText) {                 // read() missing, failed, or had nothing usable: try plain text
+    try {
+      const t = await clip.readText();
+      if (t) { await pasteText(t); return; }
+      toast('The clipboard is empty'); return;
+    } catch (e) { denied = !!e && (e.name === 'NotAllowedError' || e.name === 'SecurityError'); }
+  }
+  toast(denied ? 'Paste was not allowed. Tap the clipboard button again, then tap "Paste" on the bubble. Or long-press the message box and choose Paste.'
+               : "This browser won't let B.E.T.A. read the clipboard. Long-press the message box and choose Paste (for pictures, use the paperclip).", true);
+  $('input').focus();
 });
 let pasteViewing = null;
 function openPasteView(a) {
@@ -1992,7 +2071,7 @@ $('m-memory').addEventListener('click', () => { hide('menu'); show('memory'); lo
 // ---------------------------------------------------------------------------
 // Fade one screen out as the next fades in (wake -> login -> app).
 function showOnly(id) {
-  ['wake', 'login', 'app'].forEach((s) => {
+  ['wake', 'login', 'join', 'app'].forEach((s) => {
     const el = $(s);
     if (s === id) { el.classList.remove('hidden', 'leaving'); }
     else if (!el.classList.contains('hidden')) {
@@ -2064,10 +2143,16 @@ async function startApp(fromId) {
   if (fromId) await openChatWithEffect(fromId); else showOnly('app');
   const got = await statePromise;
   if (got.e) { addMessage('error', got.e.message); return; }
-  const st = got.s;
+  let st = got.s;
+  applyAccount(st.user);
+  if (ME && !ME.owner && !ME.interview_done) {                 // a friend's first login: a short interview first
+    await runInterview();
+    const again = await api('/api/state').catch(() => null);
+    if (again) st = again;
+  }
   chat.innerHTML = '';
   if (st.setup_error) addMessage('error', st.setup_error);
-  else if (!st.history.length) addMessage('ai', "Hi Karachi, I'm **B.E.T.A.** I can search the web, find photos, watch YouTube videos, read what you attach, and remember things for you. What do you need?");
+  else if (!st.history.length) addMessage('ai', "Hi " + (ME ? ME.name : 'there') + ", I'm **B.E.T.A.** I can search the web, find photos, watch YouTube videos, read what you attach, and remember things for you. What do you need?");
   st.history.forEach((m) => addMessage(m.role === 'user' ? 'user' : 'ai', m.text));
   updateUsage(st.usage);
   scrollDown(true);
@@ -2129,6 +2214,229 @@ $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogi
 })();
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden) scrollDown(); });
+
+// ---------------------------------------------------------------------------
+// Accounts: joining with an invite, the first-login interview, the owner's friends screen, a friend's own key
+// ---------------------------------------------------------------------------
+function applyAccount(user) {
+  ME = user || null;
+  if (!ME) return;
+  if (ME.theme) setTheme(ME.theme, false);                 // this account's own theme (not saved back by this call)
+  const friend = !ME.owner;
+  $('m-friends').classList.toggle('hidden', friend);
+  ['m-key', 'm-export', 'm-delete'].forEach((id) => $(id).classList.toggle('hidden', !friend));
+  $('m-key-text').textContent = ME.own_key ? 'My own key: on (' + (ME.own_key_mask || 'saved') + ')' : 'Use my own free key';
+  if (friend) { $('m-termux').classList.add('hidden'); $('m-k10').classList.add('hidden'); }   // tied to the owner's phone and desktop
+}
+
+// ---- joining with an invite code: a wrong field is cleared and flagged, the right ones stay filled in ----
+const JOIN_FIELDS = { code: 'join-code', name: 'join-name', password: 'join-pass' };
+const JOIN_ERR = { code: 'join-code-err', name: 'join-name-err', password: 'join-pass-err' };
+function showJoin() { showOnly('join'); setTimeout(() => $('join-code').focus(), 350); }
+async function doJoin() {
+  const body = {};
+  Object.keys(JOIN_FIELDS).forEach((k) => { body[k] = $(JOIN_FIELDS[k]).value; $(JOIN_ERR[k]).textContent = ''; });
+  body.code = body.code.trim(); body.name = body.name.trim();
+  const btn = $('join-btn');
+  btn.disabled = true; btn.classList.add('loading');
+  try {
+    await api('/api/join', { method: 'POST', body });
+    $('join-pass').value = '';
+    startApp('join');
+  } catch (e) {
+    const errs = (e.data && e.data.errors) || null;
+    if (!errs) { $(JOIN_ERR.code).textContent = e.message; return; }
+    let first = '';
+    Object.keys(errs).forEach((k) => {
+      $(JOIN_ERR[k]).textContent = errs[k];
+      if (k !== 'name') $(JOIN_FIELDS[k]).value = '';       // only what was wrong is cleared; the rest stays
+      first = first || JOIN_FIELDS[k];
+    });
+    if (first) $(first).focus();
+    const card = document.querySelector('#join .screen-card');
+    card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+  } finally { btn.disabled = false; btn.classList.remove('loading'); }
+}
+$('to-join').addEventListener('click', showJoin);
+$('to-login').addEventListener('click', showLogin);
+$('join-btn').addEventListener('click', doJoin);
+Object.values(JOIN_FIELDS).forEach((id) => $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); }));
+
+// ---- the first-login interview (friends) ----
+const IV_QS = ['How do you like my replies?', 'What are you into?', 'Anything I should always or never do?'];
+const IV_STYLES = ['Short and quick', 'Casual and funny', 'Detailed and thorough'];
+const IV_LIKES = ['Football', 'Music', 'Coding', 'Gaming', 'School', 'Business', 'Movies', 'Anime', 'Faith'];
+let IV = { q: 0, style: -1, likes: [], note: '' }, ivDone = null;
+function ivChips(options, isOn, toggle) {
+  const wrap = document.createElement('div'); wrap.className = 'iv-chips';
+  options.forEach((label, i) => {
+    const on = isOn(i);
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'iv-chip' + (on ? ' on' : '');
+    b.setAttribute('aria-pressed', String(on));
+    const text = document.createElement('span'); text.textContent = label;
+    if (on) b.innerHTML = iconSvg('check');                 // a tick as well as the highlight
+    b.appendChild(text);
+    b.addEventListener('click', () => { toggle(i); renderInterview(); });
+    wrap.appendChild(b);
+  });
+  return wrap;
+}
+function renderInterview() {
+  $('iv-progress').textContent = 'Question ' + (IV.q + 1) + ' of 3';
+  $('iv-fill').style.width = ((IV.q + 1) / 3 * 100) + '%';
+  $('iv-err').textContent = '';
+  $('iv-back').classList.toggle('hidden', IV.q === 0);
+  $('iv-next').textContent = IV.q === 2 ? 'Finish' : 'Next';
+  const body = $('iv-body'); body.textContent = '';
+  const q = document.createElement('div'); q.className = 'iv-q';
+  q.textContent = (IV.q === 0 ? 'Hi ' + ME.name + ", I'm B.E.T.A. " : '') + IV_QS[IV.q];
+  body.appendChild(q);
+  if (IV.q === 0) body.appendChild(ivChips(IV_STYLES, (i) => IV.style === i, (i) => { IV.style = i; }));
+  if (IV.q === 1) body.appendChild(ivChips(IV_LIKES, (i) => IV.likes.includes(IV_LIKES[i]), (i) => {
+    const x = IV_LIKES[i], at = IV.likes.indexOf(x); if (at < 0) IV.likes.push(x); else IV.likes.splice(at, 1);
+  }));
+  if (IV.q === 2) {
+    const t = document.createElement('textarea'); t.className = 'field'; t.id = 'iv-note'; t.rows = 3; t.maxLength = 300;
+    t.placeholder = 'Optional'; t.value = IV.note; t.addEventListener('input', () => { IV.note = t.value; });
+    body.appendChild(t);
+  }
+}
+async function finishInterview() {
+  $('iv-next').disabled = true; $('iv-skip').disabled = true;
+  try {
+    const r = await api('/api/profile', { method: 'POST', body: { style: IV.style, likes: IV.likes, note: IV.note } });
+    applyAccount(r.user);
+    hide('interview');
+    if (ivDone) { ivDone(); ivDone = null; }
+  } catch (e) { $('iv-err').textContent = e.message; }
+  finally { $('iv-next').disabled = false; $('iv-skip').disabled = false; }
+}
+function runInterview() {
+  IV = { q: 0, style: -1, likes: [], note: '' };
+  renderInterview();
+  show('interview');
+  return new Promise((resolve) => { ivDone = resolve; });
+}
+$('iv-next').addEventListener('click', () => { if (IV.q < 2) { IV.q++; renderInterview(); } else finishInterview(); });
+$('iv-back').addEventListener('click', () => { if (IV.q > 0) { IV.q--; renderInterview(); } });
+$('iv-skip').addEventListener('click', finishInterview);
+
+// ---- the owner's friends screen: allowances, pausing, removing, invite codes ----
+function textLine(t, cls) { const d = document.createElement('div'); d.className = cls || 'dim-text'; d.textContent = t; return d; }
+function miniBtn(label, onClick) { const b = document.createElement('button'); b.type = 'button'; b.className = 'mini-btn'; b.textContent = label; b.addEventListener('click', onClick); return b; }
+function codeRow(code) {
+  const row = document.createElement('div'); row.className = 'code-row';
+  const c = document.createElement('span'); c.textContent = code; row.appendChild(c);
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'icon-btn'; b.setAttribute('aria-label', 'Copy invite code'); b.title = 'Copy invite code';
+  b.innerHTML = iconSvg('copy');
+  b.addEventListener('click', async () => {
+    const ok = await copyText(code);
+    b.innerHTML = iconSvg(ok ? 'check' : 'x');
+    toast(ok ? 'Invite code copied' : 'Could not copy. Select the code and copy it by hand.', !ok);
+    setTimeout(() => { b.innerHTML = iconSvg('copy'); }, 2000);
+  });
+  row.appendChild(b);
+  return row;
+}
+async function renderAdmin(fresh) {
+  const body = $('admin-body'); body.textContent = 'Loading…';
+  let d;
+  try { d = await api('/api/admin/users'); } catch (e) { body.textContent = e.message; return; }
+  body.textContent = '';
+  body.appendChild(cardLabel('Friends'));
+  if (!d.friends.length) body.appendChild(textLine('No friends yet. Create an invite code below and send it to them.'));
+  d.friends.forEach((f) => {
+    const card = document.createElement('div'); card.className = 'admin-card';
+    const h = document.createElement('h4'); h.textContent = f.name + (f.paused ? ' (paused)' : ''); card.appendChild(h);
+    card.appendChild(textLine(f.own_key ? 'Uses their own key: no daily limit' : 'Today: ' + f.used + ' of ' + f.limit + ' messages'));
+    const row = document.createElement('div'); row.className = 'admin-row';
+    const lim = document.createElement('span'); lim.textContent = 'Daily allowance: ';
+    const num = document.createElement('b'); num.textContent = f.limit; lim.appendChild(num);
+    const set = async (body2) => { try { await api('/api/admin/user', { method: 'POST', body: Object.assign({ id: f.id }, body2) }); renderAdmin(); } catch (e) { toast(e.message, true); } };
+    const ctr = document.createElement('span');
+    ctr.appendChild(miniBtn('−', () => set({ limit: f.limit - 10 }))); ctr.appendChild(document.createTextNode(' ')); ctr.appendChild(miniBtn('+', () => set({ limit: f.limit + 10 })));
+    row.appendChild(lim); row.appendChild(ctr); card.appendChild(row);
+    const row2 = document.createElement('div'); row2.className = 'admin-row';
+    row2.appendChild(miniBtn(f.paused ? 'Resume account' : 'Pause account', () => set({ paused: !f.paused })));
+    row2.appendChild(miniBtn('Remove', async () => {
+      if (!(await askConfirm('Remove ' + f.name + '?', 'Their chats, memory and settings are erased for good.', 'Remove'))) return;
+      try { await api('/api/admin/delete', { method: 'POST', body: { id: f.id } }); renderAdmin(); } catch (e) { toast(e.message, true); }
+    }));
+    card.appendChild(row2);
+    body.appendChild(card);
+  });
+  body.appendChild(cardLabel('Invites'));
+  const make = document.createElement('button'); make.type = 'button'; make.className = 'btn-primary'; make.textContent = 'Create invite code';
+  make.addEventListener('click', async () => {
+    make.disabled = true;
+    try { const r = await api('/api/admin/invite', { method: 'POST', body: {} }); await renderAdmin(r.code); } catch (e) { toast(e.message, true); make.disabled = false; }
+  });
+  body.appendChild(make);
+  const codes = d.invites.slice(); if (fresh && !codes.includes(fresh)) codes.unshift(fresh);
+  if (codes.length) { body.appendChild(textLine('Each code works once and expires in 14 days.')); codes.forEach((c) => body.appendChild(codeRow(c))); }
+}
+$('m-friends').addEventListener('click', () => { hide('menu'); show('admin'); renderAdmin(); });
+$('admin-close').addEventListener('click', () => hide('admin'));
+
+// ---- a friend's own free key: get it, paste it, check it ----
+const KEYS = { err: '', busy: false, val: '' };
+function renderOwnKey() {
+  const body = $('ownkey-body'); body.textContent = '';
+  if (ME && ME.own_key) {
+    const card = document.createElement('div'); card.className = 'admin-card';
+    const h = document.createElement('h4'); h.textContent = 'Connected'; card.appendChild(h);
+    card.appendChild(textLine('Your Google AI Studio key ' + (ME.own_key_mask || '') + ' is on. There is no daily limit from B.E.T.A.'));
+    card.appendChild(textLine('It is stored encrypted and used only for your own messages.'));
+    const row = document.createElement('div'); row.className = 'admin-row';
+    row.appendChild(miniBtn('Remove my key', async () => {
+      try { const r = await api('/api/key/remove', { method: 'POST', body: {} }); applyAccount(r.user); refreshUsage(); renderOwnKey(); toast('Key removed'); } catch (e) { toast(e.message, true); }
+    }));
+    card.appendChild(row); body.appendChild(card);
+    return;
+  }
+  const steps = document.createElement('div'); steps.className = 'admin-card key-steps';
+  const h = document.createElement('h4'); h.textContent = 'Get your free key (about 2 minutes)'; steps.appendChild(h);
+  ['1. Sign in to Google AI Studio', '2. Tap Create API key', '3. Copy it, then come back here'].forEach((t) => steps.appendChild(textLine(t, 'key-step')));
+  const open = document.createElement('button'); open.type = 'button'; open.className = 'btn-primary'; open.textContent = 'Open Google AI Studio';
+  open.addEventListener('click', () => { window.open('https://aistudio.google.com/apikey', '_blank', 'noopener'); });
+  steps.appendChild(open); body.appendChild(steps);
+  body.appendChild(cardLabel('Paste your key'));
+  const line = document.createElement('div'); line.className = 'key-line';
+  const input = document.createElement('input'); input.className = 'field'; input.id = 'key-input'; input.placeholder = 'AIza…'; input.autocomplete = 'off'; input.spellcheck = false; input.value = KEYS.val;
+  const paste = document.createElement('button'); paste.type = 'button'; paste.className = 'icon-btn'; paste.setAttribute('aria-label', 'Paste from clipboard'); paste.title = 'Paste from clipboard'; paste.innerHTML = iconSvg('clipboard');
+  paste.addEventListener('click', async () => {
+    try { input.value = ((await navigator.clipboard.readText()) || '').trim(); KEYS.val = input.value; KEYS.err = ''; renderOwnKey(); }
+    catch (e) { toast('Tap the small Paste bubble your browser shows, or long-press the box and choose Paste.', true); }
+  });
+  line.appendChild(input); line.appendChild(paste); body.appendChild(line);
+  const err = document.createElement('div'); err.className = 'error-line'; err.textContent = KEYS.err; body.appendChild(err);
+  const check = document.createElement('button'); check.type = 'button'; check.className = 'btn-primary'; check.disabled = KEYS.busy;
+  check.textContent = KEYS.busy ? 'Checking with Google…' : 'Check and save key';
+  check.addEventListener('click', async () => {
+    KEYS.val = input.value.trim(); KEYS.err = '';
+    if (!KEYS.val) { KEYS.err = 'Paste your key first.'; renderOwnKey(); return; }
+    KEYS.busy = true; renderOwnKey();
+    try {
+      const r = await api('/api/key', { method: 'POST', body: { key: KEYS.val } });
+      KEYS.val = ''; KEYS.busy = false; applyAccount(r.user); refreshUsage(); renderOwnKey(); toast('Key works. Your daily limit is lifted.');
+    } catch (e) { KEYS.busy = false; KEYS.err = e.message; KEYS.val = ''; renderOwnKey(); }   // the wrong key is cleared, with the reason
+  });
+  body.appendChild(check);
+}
+async function refreshUsage() { try { updateUsage((await api('/api/state')).usage); } catch (e) { /* ignore */ } }
+$('m-key').addEventListener('click', () => { hide('menu'); renderOwnKey(); show('ownkey'); });
+$('ownkey-close').addEventListener('click', () => hide('ownkey'));
+
+// ---- export / delete ----
+$('m-export').addEventListener('click', () => { hide('menu'); location.href = '/api/export'; });
+$('m-delete').addEventListener('click', async () => {
+  hide('menu');
+  if (!(await askConfirm('Delete your account?', 'Your chats, memory and settings are erased for good. You can export them first.', 'Continue'))) return;
+  const pw = window.prompt('Type your password to confirm');
+  if (!pw) return;
+  try { await api('/api/account/delete', { method: 'POST', body: { password: pw } }); location.reload(); }
+  catch (e) { toast(e.message, true); }
+});
 
 (async function boot() {
   if ('serviceWorker' in navigator) {

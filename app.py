@@ -32,7 +32,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, g, jsonify, request, send_from_directory
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -46,6 +46,10 @@ import storage
 import term_bridge
 import video_store
 import tts_edge
+import accounts
+import userctx
+
+accounts.install()        # from here on, storage.get_store() returns the slice of whichever account is being served
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -58,7 +62,7 @@ app.config["MAX_CONTENT_LENGTH"] = max(32 * 1024 * 1024, video_store.MAX_BYTES +
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "2.9"
+APP_VERSION = "4.0"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -94,61 +98,91 @@ def _serializer():
     return URLSafeTimedSerializer(secret, salt="beta-session")
 
 
-def _is_authed():
+def _session_uid():
+    """The account id in the session cookie, or None. Cookies made before accounts existed belong to the owner."""
     token = request.cookies.get(SESSION_COOKIE, "")
     if not token:
-        return False
+        return None
     try:
-        _serializer().loads(token, max_age=SESSION_DAYS * 86400)
-        return True
+        data = _serializer().loads(token, max_age=SESSION_DAYS * 86400)
     except (BadSignature, SignatureExpired):
-        return False
+        return None
+    uid = data.get("u") if isinstance(data, dict) else None
+    if uid == 1:
+        uid = accounts.OWNER_ID
+    user = accounts.get_user(uid) if isinstance(uid, str) else None
+    if not user or user.get("paused"):
+        return None
+    return uid
+
+
+def _is_authed():
+    return _session_uid() is not None
+
+
+def _uid():
+    return getattr(g, "uid", None) or userctx.get_uid() or accounts.OWNER_ID
+
+
+def _set_session(resp, uid):
+    resp.set_cookie(SESSION_COOKIE, _serializer().dumps({"u": uid}), max_age=SESSION_DAYS * 86400,
+                    httponly=True, secure=request.is_secure, samesite="Lax", path="/")
+    return resp
 
 
 # ---------------------------------------------------------------------------
 # Agent (built lazily so /api/health works before keys are configured)
 # ---------------------------------------------------------------------------
 
-AGENT = None
+AGENTS = {}
 AGENT_ERROR = None
 _agent_lock = threading.Lock()
 CURRENT_JOB = None
+RUN_LOCK = threading.Lock()      # one chat is answered at a time: image/video/Termux helpers hold per-job state, so jobs queue up
 
 
-def get_agent():
-    global AGENT, AGENT_ERROR
+def get_agent(uid=None):
+    global AGENT_ERROR
+    uid = uid or _uid()
     with _agent_lock:
-        if AGENT is not None:
-            return AGENT
+        if uid in AGENTS:
+            return AGENTS[uid]
         try:
             import beta_agent
-            AGENT = beta_agent.build_agent(
-                on_provider_switch=_on_provider_switch,
-                on_rate_limit=_on_rate_limit,
+            agent = beta_agent.build_agent(
+                uid=uid,
+                on_provider_switch=lambda *a, **k: _on_provider_switch(uid, *a, **k),
+                on_rate_limit=lambda *a, **k: _on_rate_limit(uid, *a, **k),
             )
+            AGENTS[uid] = agent
             AGENT_ERROR = None
         except Exception as e:
             AGENT_ERROR = str(e)
             raise
-        return AGENT
+        return agent
 
 
-def _job_event(event):
+def _drop_agent(uid):
+    with _agent_lock:
+        AGENTS.pop(uid, None)
+
+
+def _job_event(uid, event):
     job = CURRENT_JOB
-    if job is not None and not job["cancelled"]:
+    if job is not None and job.get("uid") == uid and not job["cancelled"]:
         job["events"].append(event)
 
 
-def _on_provider_switch(kind, model, reason=None):
+def _on_provider_switch(uid, kind, model, reason=None):
     if kind == "switched":
         why = "Gemini's daily quota is used up" if reason == "quota" else "Gemini is overloaded"
-        _job_event({"type": "notice", "text": "Switched to a backup model (" + why + ")."})
+        _job_event(uid, {"type": "notice", "text": "Switched to a backup model (" + why + ")."})
     elif kind == "restored":
-        _job_event({"type": "notice", "text": "Back on Gemini."})
+        _job_event(uid, {"type": "notice", "text": "Back on Gemini."})
 
 
-def _on_rate_limit(wait_seconds=0, *args):
-    _job_event({"type": "activity", "text": "Rate limit hit - waiting %ss..." % wait_seconds})
+def _on_rate_limit(uid, wait_seconds=0, *args):
+    _job_event(uid, {"type": "activity", "text": "Rate limit hit - waiting %ss..." % wait_seconds})
 
 
 # ---------------------------------------------------------------------------
@@ -159,21 +193,22 @@ JOBS = {}
 _jobs_lock = threading.Lock()
 
 
-def _new_job():
+def _new_job(uid):
     now = time.time()
     with _jobs_lock:
         for jid in [j for j, v in JOBS.items() if now - v["created"] > 900]:
             JOBS.pop(jid, None)
-        job = {"id": uuid.uuid4().hex[:16], "events": [], "done": False, "cancelled": False, "created": now,
+        job = {"id": uuid.uuid4().hex[:16], "uid": uid, "events": [], "done": False, "cancelled": False, "created": now,
                "last_poll": now, "hidden": False}
         JOBS[job["id"]] = job
         return job
 
 
-def _active_job():
+def _active_job(uid=None):
+    uid = uid or _uid()
     with _jobs_lock:
         for job in JOBS.values():
-            if not job["done"]:
+            if not job["done"] and job.get("uid") == uid:
                 return job
     return None
 
@@ -187,9 +222,14 @@ def _friendly_error(e):
 
 def _run_job(job, text, saved_paths, tmpdir, videos=None):
     global CURRENT_JOB
+    uid = job["uid"]
+    userctx.set_uid(uid)                                  # everything this job reads and writes is this account's
+    if not RUN_LOCK.acquire(blocking=False):
+        job["events"].append({"type": "activity", "text": "Another chat is being answered - you're next..."})
+        RUN_LOCK.acquire()
     CURRENT_JOB = job
     try:
-        agent = get_agent()
+        agent = get_agent(uid)
 
         def on_tool(description):
             if not job["cancelled"]:
@@ -217,6 +257,7 @@ def _run_job(job, text, saved_paths, tmpdir, videos=None):
         CURRENT_JOB = None
         image_gen.clear_user_refs()
         video_store.clear_current()
+        RUN_LOCK.release()
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
         try:
@@ -235,7 +276,7 @@ def _run_job(job, text, saved_paths, tmpdir, videos=None):
 PUSH_KEY = "push_subs"
 MAX_PUSH_SUBS = 5
 PUSH_AWAY_S = 5          # no chat poll for this long = you have left the app
-PRESENCE = {"away": False, "t": 0.0}    # the page tells the server the moment you leave or come back (see /api/presence)
+PRESENCE = {}    # per account: the page tells the server the moment you leave or come back (see /api/presence)
 _push_lock = threading.Lock()
 
 
@@ -327,9 +368,12 @@ def _send_ntfy(title, body):
     if token:
         headers["Authorization"] = "Bearer " + token
     url, err = server + "/" + urllib.parse.quote(topic, safe=""), ""
-    for attempt, wait in enumerate((0, 2, 6), start=1):
+    wait_next = 0
+    for attempt, wait in enumerate((0, 3, 10, 25), start=1):
+        wait = max(wait, wait_next)
         if wait:
             time.sleep(wait)
+        wait_next = 0
         try:
             req = urllib.request.Request(url, data=body.encode("utf-8"), headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -337,25 +381,46 @@ def _send_ntfy(title, body):
             LAST_ALERT.update(t=time.time(), ok=True, detail="sent" if attempt == 1 else "sent after %d tries" % attempt)
             return True
         except urllib.error.HTTPError as e:
-            err = "HTTP %s" % e.code
+            try:
+                said = e.read(200).decode("utf-8", "replace").replace("\n", " ").strip()
+            except Exception:
+                said = ""
+            err = "HTTP %s%s" % (e.code, (" - " + said) if said else "")
+            if e.code == 429:
+                err += " | ntfy is limiting this server's shared address. Fix: make a free ntfy.sh account, create an access token, and set NTFY_TOKEN on Render."
+                try:
+                    wait_next = min(30, int(e.headers.get("Retry-After", "0") or 0))    # if ntfy says how long to wait, wait that long
+                except (TypeError, ValueError):
+                    wait_next = 0
+            elif e.code in (401, 403):
+                err += " | ntfy rejected the login - check NTFY_TOKEN."
             if e.code not in (429, 500, 502, 503, 504):
                 break
         except Exception as e:
             err = repr(e)[:80]
     print("[B.E.T.A.] ntfy notification FAILED after retries (%s)" % err)
-    LAST_ALERT.update(t=time.time(), ok=False, detail=err)
+    LAST_ALERT.update(t=time.time(), ok=False, detail=err[:300])
     return False
 
 
-def _any_channel():
-    return (_ntfy_ready() and _ntfy_on()) or (_vapid_ready() and bool(_load_subs()))
+def _any_channel(uid=None):
+    uid = uid or _uid()
+    with userctx.as_user(uid):
+        ntfy = uid == accounts.OWNER_ID and _ntfy_ready() and _ntfy_on()      # ntfy is the owner's own channel
+        return ntfy or (_vapid_ready() and bool(_load_subs()))
 
 
-def _send_all(title, body):
-    if _ntfy_ready() and _ntfy_on():
-        _send_ntfy(title, body)
-    if _vapid_ready() and _load_subs():
-        _send_push(title, body)
+def _send_all(title, body, uid=None):
+    uid = uid or accounts.OWNER_ID
+    with userctx.as_user(uid):
+        if uid == accounts.OWNER_ID and _ntfy_ready() and _ntfy_on():
+            _send_ntfy(title, body)
+        if _vapid_ready() and _load_subs():
+            _send_push(title, body)
+
+
+def _presence(uid):
+    return PRESENCE.setdefault(uid, {"away": False, "t": 0.0})
 
 
 def _user_is_away(job):
@@ -363,31 +428,32 @@ def _user_is_away(job):
     the page said so the moment you left (presence), the latest chat poll said the page is in the background, or the
     page has stopped asking for updates (a frozen background tab)."""
     since_poll = time.time() - job.get("last_poll", 0)
-    return bool(PRESENCE["away"] or job.get("hidden") or since_poll > PUSH_AWAY_S), since_poll
+    return bool(_presence(job["uid"])["away"] or job.get("hidden") or since_poll > PUSH_AWAY_S), since_poll
 
 
 def _notify_if_away(job):
     """Called when a reply finishes. Notifies only if you are not looking at the chat right now."""
-    if job.get("cancelled") or not _any_channel():
+    uid = job["uid"]
+    if job.get("cancelled") or not _any_channel(uid):
         return
     away, since_poll = _user_is_away(job)
-    print("[B.E.T.A.] alert check: away=%s (left=%s, background=%s, last poll %.1fs ago)" % (
-        away, PRESENCE["away"], bool(job.get("hidden")), since_poll))
+    print("[B.E.T.A.] alert check (%s): away=%s (left=%s, background=%s, last poll %.1fs ago)" % (
+        uid, away, _presence(uid)["away"], bool(job.get("hidden")), since_poll))
     if not away:
         return
     last = next((e for e in reversed(job["events"]) if e.get("type") in ("reply", "error")), None)
     if not last:
         return
-    threading.Thread(target=_send_all, args=("B.E.T.A.", _push_body(last["type"], last.get("text"))), daemon=True).start()
+    threading.Thread(target=_send_all, args=("B.E.T.A.", _push_body(last["type"], last.get("text")), uid), daemon=True).start()
 
 
 def _notify_approval(command):
-    """A Termux command is waiting for your tap. If you've left the chat, say so with a notification."""
+    """A Termux command is waiting for your tap (the owner's). If you've left the chat, say so with a notification."""
     job = CURRENT_JOB
-    if not job or not _any_channel():
+    if not job or job.get("uid") != accounts.OWNER_ID or not _any_channel(accounts.OWNER_ID):
         return
     if job.get("hidden") or (time.time() - job.get("last_poll", 0) > PUSH_AWAY_S):
-        threading.Thread(target=_send_all, args=("B.E.T.A.", "A command needs your approval."), daemon=True).start()
+        threading.Thread(target=_send_all, args=("B.E.T.A.", "A command needs your approval.", accounts.OWNER_ID), daemon=True).start()
 
 
 term_bridge.on_ask = _notify_approval
@@ -464,7 +530,8 @@ def _security_headers(resp):
     return resp
 
 
-PUBLIC_API = {"/api/health", "/api/login", "/api/me"}
+PUBLIC_API = {"/api/health", "/api/login", "/api/me", "/api/join"}
+OWNER_ONLY_PREFIXES = ("/api/term/", "/api/k10/", "/api/admin/", "/api/notify/ntfy")   # tied to the owner's phone, desktop and settings
 TOKEN_API = {"/api/term/next", "/api/term/result"}      # the Termux script: checked against TERM_TOKEN inside each route
 
 
@@ -478,9 +545,19 @@ def _gate():
         return None
     if not _password():
         return jsonify(error="Server is missing BETA_PASSWORD."), 503
-    if not _is_authed():
+    uid = _session_uid()
+    if uid is None:
         return jsonify(error="Not logged in."), 401
+    g.uid = uid
+    userctx.set_uid(uid)
+    if uid != accounts.OWNER_ID and request.path.startswith(OWNER_ONLY_PREFIXES):
+        return jsonify(error="Only the owner can do that."), 403
     return None
+
+
+@app.teardown_request
+def _forget_account(_exc):
+    userctx.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -499,13 +576,11 @@ def health():
 
 @app.route("/api/me")
 def me():
-    return jsonify(authed=_is_authed(), configured=bool(_password()))
+    uid = _session_uid()
+    return jsonify(authed=uid is not None, configured=bool(_password()), user=accounts.public(uid) if uid else None)
 
 
-@app.route("/api/login", methods=["POST"])
-def login():
-    if not _password():
-        return jsonify(error="Server is missing BETA_PASSWORD."), 503
+def _rate_limited():
     ip = request.remote_addr or "?"
     now = time.time()
     with _login_lock:
@@ -514,19 +589,50 @@ def login():
         if len(recent) >= LOGIN_MAX_FAILS:
             wait = int(LOGIN_WINDOW_S - (now - recent[0]))
             return jsonify(error="Too many attempts. Try again in %d minutes." % max(1, wait // 60 + 1)), 429
-    body = request.get_json(silent=True) or {}
-    supplied = str(body.get("password", ""))
-    if hmac.compare_digest(supplied.encode("utf-8"), _password().encode("utf-8")):
-        with _login_lock:
-            _login_fails.pop(ip, None)
-        resp = jsonify(ok=True)
-        resp.set_cookie(SESSION_COOKIE, _serializer().dumps({"u": 1}), max_age=SESSION_DAYS * 86400,
-                        httponly=True, secure=request.is_secure, samesite="Lax", path="/")
-        return resp
+    return None
+
+
+def _note_fail():
     with _login_lock:
-        _login_fails.setdefault(ip, []).append(now)
+        _login_fails.setdefault(request.remote_addr or "?", []).append(time.time())
+
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    if not _password():
+        return jsonify(error="Server is missing BETA_PASSWORD."), 503
+    limited = _rate_limited()
+    if limited:
+        return limited
+    body = request.get_json(silent=True) or {}
+    uid = accounts.authenticate(str(body.get("password", "")))
+    if uid is not None:
+        if (accounts.get_user(uid) or {}).get("paused"):
+            return jsonify(error="This account is paused. Ask the person who runs B.E.T.A."), 403
+        with _login_lock:
+            _login_fails.pop(request.remote_addr or "?", None)
+        return _set_session(jsonify(ok=True, user=accounts.public(uid)), uid)
+    _note_fail()
     time.sleep(LOGIN_FAIL_DELAY)
     return jsonify(error="Wrong password."), 401
+
+
+@app.route("/api/join", methods=["POST"])
+def join():
+    """A friend creates their account with an invite code. Wrong fields come back one by one so the page can keep the rest."""
+    if not _password():
+        return jsonify(error="Server is missing BETA_PASSWORD."), 503
+    limited = _rate_limited()
+    if limited:
+        return limited
+    body = request.get_json(silent=True) or {}
+    uid, errors = accounts.create_user(body.get("code"), body.get("name"), body.get("password"))
+    if errors:
+        if "code" in errors:
+            _note_fail()
+            time.sleep(LOGIN_FAIL_DELAY)
+        return jsonify(error="Fix the highlighted fields.", errors=errors), 400
+    return _set_session(jsonify(ok=True, user=accounts.public(uid)), uid)
 
 
 @app.route("/api/logout", methods=["POST"])
@@ -569,14 +675,19 @@ def state():
         return jsonify(history=[], usage=None, active_job=None, setup_error=_friendly_error(e))
     active = _active_job()
     return jsonify(history=_history_for_ui(agent), usage=_usage(agent), active_job=active["id"] if active else None,
-                   setup_error=None)
+                   setup_error=None, user=accounts.public(_uid()))
 
 
 def _usage(agent):
+    """The model-usage snapshot, plus (for friends) their daily allowance - the page shows that instead of model quotas."""
     try:
-        return agent.usage_snapshot()
+        snap = agent.usage_snapshot()
     except Exception:
-        return None
+        snap = None
+    allowance = accounts.allowance(_uid())
+    if allowance is not None:
+        snap = dict(snap or {}, allowance=allowance)
+    return snap
 
 
 @app.route("/api/send", methods=["POST"])
@@ -589,6 +700,10 @@ def send():
         return jsonify(error="That message is too long (max %d characters)." % MAX_TEXT_CHARS), 400
     if _active_job() is not None:
         return jsonify(error="B.E.T.A. is still working on your last message."), 409
+    uid = _uid()
+    if not accounts.can_send(uid):
+        return jsonify(error="You've used today's allowance. It resets tomorrow - or add your own free key in the menu to keep going.",
+                       allowance=accounts.allowance(uid)), 429
     try:
         paths, tmpdir = _save_attachments(body.get("files"))
     except ValueError as e:
@@ -596,15 +711,16 @@ def send():
     videos = [str(v) for v in (body.get("videos") or [])][:2]
     if any(not video_store.known(v) for v in videos):
         return jsonify(error="One of the videos is no longer stored. Attach it again."), 400
-    job = _new_job()
+    accounts.consume(uid)
+    job = _new_job(uid)
     threading.Thread(target=_run_job, args=(job, text, paths, tmpdir, videos), daemon=True).start()
-    return jsonify(job=job["id"])
+    return jsonify(job=job["id"], allowance=accounts.allowance(uid))
 
 
 @app.route("/api/poll")
 def poll():
     job = JOBS.get(request.args.get("job", ""))
-    if job is None:
+    if job is None or job.get("uid") != _uid():
         return jsonify(error="Unknown job.", gone=True), 404
     try:
         after = max(0, int(request.args.get("after", "0")))
@@ -613,7 +729,7 @@ def poll():
     job["last_poll"] = time.time()                       # lets the server tell whether you are still looking at the chat
     job["hidden"] = request.args.get("h") == "1"         # ...or whether the page is open but in the background
     events = job["events"][after:]
-    agent = AGENT
+    agent = AGENTS.get(_uid())
     return jsonify(events=events, next=after + len(events), done=job["done"] and not events,
                    usage=_usage(agent) if agent else None)
 
@@ -650,9 +766,10 @@ def push_unsubscribe():
 
 @app.route("/api/push/test", methods=["POST"])
 def push_test():
-    if not (_vapid_ready() or _ntfy_ready()):
+    owner = _uid() == accounts.OWNER_ID
+    if not (_vapid_ready() or (owner and _ntfy_ready())):
         return jsonify(error="Notifications aren't set up on the server yet."), 503
-    threading.Thread(target=_send_all, args=("B.E.T.A.", "Notifications are on."), daemon=True).start()
+    threading.Thread(target=_send_all, args=("B.E.T.A.", "Notifications are on.", _uid()), daemon=True).start()
     return jsonify(ok=True)
 
 
@@ -661,13 +778,15 @@ def notify_info():
     last = None
     if LAST_ALERT["ok"] is not None:
         last = {"ago": int(time.time() - LAST_ALERT["t"]), "ok": LAST_ALERT["ok"], "detail": LAST_ALERT["detail"]}
-    return jsonify(ntfy=_ntfy_ready(), ntfy_on=_ntfy_ready() and _ntfy_on(), webpush=_vapid_ready(), last=last)
+    owner = _uid() == accounts.OWNER_ID
+    return jsonify(ntfy=_ntfy_ready() and owner, ntfy_on=owner and _ntfy_ready() and _ntfy_on(), webpush=_vapid_ready(),
+                   last=last if owner else None)
 
 
 @app.route("/api/presence", methods=["POST"])
 def presence():
     d = request.get_json(silent=True) or {}
-    PRESENCE.update(away=bool(d.get("away")), t=time.time())
+    _presence(_uid()).update(away=bool(d.get("away")), t=time.time())
     return jsonify(ok=True)
 
 
@@ -685,10 +804,11 @@ def notify_ntfy():
 @app.route("/api/cancel", methods=["POST"])
 def cancel():
     job = JOBS.get(str((request.get_json(silent=True) or {}).get("job", "")))
-    if job:
+    if job and job.get("uid") == _uid():
         job["cancelled"] = True    # the model call itself can't be interrupted, but nothing more is shown
-    term_bridge.cancel_all()
-    k10_bridge.cancel_all()
+    if _uid() == accounts.OWNER_ID:
+        term_bridge.cancel_all()
+        k10_bridge.cancel_all()
     return jsonify(ok=True)
 
 
@@ -704,14 +824,15 @@ def clear():
         agent.messages = [m for m in agent.messages if m.get("role") == "system"][:1]
         import agent_core
         agent_core.save_memory(agent.messages)
-    video_store.forget_all()
+    if _uid() == accounts.OWNER_ID:
+        video_store.forget_all()
     return jsonify(ok=True)
 
 
 @app.route("/api/full_image", methods=["POST"])
 def full_image():
     url = str((request.get_json(silent=True) or {}).get("url", ""))
-    agent = AGENT
+    agent = AGENTS.get(_uid())
     if not agent or url not in agent.allowed_image_urls:
         return jsonify(data=None)
     data = image_search.fetch_image_data_url(url, max_bytes=image_search.FULL_MAX_BYTES, timeout=15)
@@ -1005,8 +1126,8 @@ def k10_decide():
 
 
 def _notify_new_mail(m):
-    if _any_channel():
-        threading.Thread(target=_send_all, args=("B.E.T.A.", "New K-10 mail from ALPHA."), daemon=True).start()
+    if _any_channel(accounts.OWNER_ID):
+        threading.Thread(target=_send_all, args=("B.E.T.A.", "New K-10 mail from ALPHA.", accounts.OWNER_ID), daemon=True).start()
 
 
 k10_bridge.on_new = _notify_new_mail
@@ -1047,12 +1168,14 @@ def capabilities():
         extras = list(get_agent().extra_models)
     except Exception:
         pass
+    owner = _uid() == accounts.OWNER_ID
     return jsonify(
+        owner=owner,
         images_search=bool(env.get("SERPER_API_KEY", "").strip()),
         image_gen=bool((env.get("CLOUDFLARE_ACCOUNT_ID") and env.get("CLOUDFLARE_API_TOKEN")) or env.get("GEMINI_IMAGE_API_KEY")),
-        termux=term_bridge.enabled(), termux_connected=term_bridge.connected(),
-        k10=k10_bridge.enabled(),
-        alerts=_any_channel(), alerts_ntfy=_ntfy_ready(),
+        termux=owner and term_bridge.enabled(), termux_connected=owner and term_bridge.connected(),
+        k10=owner and k10_bridge.enabled(),
+        alerts=_any_channel(), alerts_ntfy=owner and _ntfy_ready(),
         groq=bool(env.get("GROQ_API_KEY", "").strip()),
         extra_models=extras,
         attach_chars=_attach_chars(),
@@ -1078,6 +1201,33 @@ def generated(gid):
 # Long-term memory panel
 # ---------------------------------------------------------------------------
 
+def _per_account_brain():
+    """Long-term memory (the pinned facts) lives in a file on the server. Make every account except the owner keep theirs in
+    their own slice of the database instead, so friends never see (or change) each other's - or the owner's."""
+    try:
+        from personal_brain import brain_manager
+    except Exception as e:
+        print("[B.E.T.A.] long-term memory is not per-account:", repr(e)[:100])
+        return
+    orig_load, orig_save = brain_manager.load_db, brain_manager.save_db
+
+    def load_db():
+        if userctx.get_uid() in (None, accounts.OWNER_ID):
+            return orig_load()
+        data = storage.get_store().get("brain", None)
+        return data if isinstance(data, dict) else {"facts": []}
+
+    def save_db(data):
+        if userctx.get_uid() in (None, accounts.OWNER_ID):
+            return orig_save(data)
+        storage.get_store().set("brain", data)
+
+    brain_manager.load_db, brain_manager.save_db = load_db, save_db
+
+
+_per_account_brain()
+
+
 @app.route("/api/memory")
 def memory_list():
     from personal_brain import brain_manager
@@ -1102,6 +1252,138 @@ def memory_delete():
     facts.pop(idx)
     brain_manager.save_db(data)
     return jsonify(ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Accounts: the first-login interview, preferences, the owner's admin screen, a friend's own key, export and delete
+# ---------------------------------------------------------------------------
+
+def _account_error(e):
+    return jsonify(error=str(e)), 400
+
+
+@app.route("/api/profile", methods=["POST"])
+def save_profile():
+    """The friend's answers from the first-login interview. B.E.T.A.'s first message in the chat is written from them."""
+    uid, d = _uid(), request.get_json(silent=True) or {}
+    try:
+        accounts.set_profile(uid, d.get("style"), d.get("likes"), d.get("note"))
+    except accounts.AccountError as e:
+        return _account_error(e)
+    try:
+        agent = get_agent(uid)
+        with agent._lock:
+            if not [m for m in agent.messages if m.get("role") != "system"]:
+                agent.messages.append({"role": "assistant", "content": accounts.greeting(uid)})
+                import agent_core
+                agent_core.save_memory(agent.messages)
+    except Exception as e:
+        print("[B.E.T.A.] couldn't write the first message:", repr(e)[:120])
+    return jsonify(ok=True, user=accounts.public(uid))
+
+
+@app.route("/api/prefs", methods=["POST"])
+def save_prefs():
+    """Per-account preferences (today: the theme). One person's choice never changes anyone else's."""
+    uid, d = _uid(), request.get_json(silent=True) or {}
+    try:
+        if "theme" in d:
+            accounts.set_theme(uid, d.get("theme"))
+    except accounts.AccountError as e:
+        return _account_error(e)
+    return jsonify(ok=True, user=accounts.public(uid))
+
+
+@app.route("/api/admin/users")
+def admin_users():
+    return jsonify(friends=accounts.list_friends(), invites=accounts.open_invites(), default_limit=accounts.default_limit())
+
+
+@app.route("/api/admin/user", methods=["POST"])
+def admin_user():
+    d = request.get_json(silent=True) or {}
+    try:
+        accounts.admin_update(str(d.get("id", "")), limit=d.get("limit"), paused=d.get("paused") if "paused" in d else None)
+    except (accounts.AccountError, ValueError, TypeError) as e:
+        return jsonify(error=str(e) or "Bad request."), 400
+    if d.get("paused"):
+        _drop_agent(str(d.get("id", "")))
+    return jsonify(ok=True, friends=accounts.list_friends())
+
+
+@app.route("/api/admin/invite", methods=["POST"])
+def admin_invite():
+    return jsonify(ok=True, code=accounts.create_invite())
+
+
+@app.route("/api/admin/delete", methods=["POST"])
+def admin_delete():
+    uid = str((request.get_json(silent=True) or {}).get("id", ""))
+    try:
+        accounts.delete_user(uid)
+    except accounts.AccountError as e:
+        return _account_error(e)
+    _drop_agent(uid)
+    return jsonify(ok=True, friends=accounts.list_friends())
+
+
+@app.route("/api/key", methods=["POST"])
+def own_key():
+    """A friend adds their own free Google AI Studio key: checked with Google, stored encrypted, and from then on used for
+    their messages instead of the shared key (so there is no daily allowance)."""
+    uid = _uid()
+    if uid == accounts.OWNER_ID:
+        return jsonify(error="Your key is set on the server."), 400
+    if _active_job(uid) is not None:
+        return jsonify(error="Wait for the current reply to finish first."), 409
+    key = str((request.get_json(silent=True) or {}).get("key", "")).strip()
+    problem = accounts.check_gemini_key_format(key) or accounts.verify_gemini_key(key)
+    if problem:
+        return jsonify(error=problem), 400
+    try:
+        accounts.set_own_key(uid, key)
+    except accounts.AccountError as e:
+        return jsonify(error=str(e)), 503
+    import beta_agent
+    _drop_agent(uid)
+    beta_agent.drop_usage(uid)
+    return jsonify(ok=True, masked=accounts.mask_key(key), user=accounts.public(uid))
+
+
+@app.route("/api/key/remove", methods=["POST"])
+def own_key_remove():
+    uid = _uid()
+    if _active_job(uid) is not None:
+        return jsonify(error="Wait for the current reply to finish first."), 409
+    accounts.remove_own_key(uid)
+    import beta_agent
+    _drop_agent(uid)
+    beta_agent.drop_usage(uid)
+    return jsonify(ok=True, user=accounts.public(uid))
+
+
+@app.route("/api/export")
+def export_account():
+    try:
+        data = accounts.export_data(_uid())
+    except accounts.AccountError as e:
+        return _account_error(e)
+    return Response(json.dumps(data, indent=2, ensure_ascii=False), mimetype="application/json",
+                    headers={"Content-Disposition": "attachment; filename=beta-my-data.json"})
+
+
+@app.route("/api/account/delete", methods=["POST"])
+def delete_account():
+    uid = _uid()
+    if uid == accounts.OWNER_ID:
+        return jsonify(error="The owner account can't be deleted here."), 400
+    if accounts.authenticate(str((request.get_json(silent=True) or {}).get("password", ""))) != uid:
+        return jsonify(error="Wrong password."), 400
+    _drop_agent(uid)
+    accounts.delete_user(uid)
+    resp = jsonify(ok=True)
+    resp.delete_cookie(SESSION_COOKIE, path="/")
+    return resp
 
 
 # ---------------------------------------------------------------------------

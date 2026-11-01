@@ -1,34 +1,39 @@
-# B.E.T.A. + ALPHA update (K-10 reliability, paste, Groq models)
+# B.E.T.A. 4.0 - accounts for friends, plus ideas 1 and 2 (replace these files in your Render repo, push)
 
-Release number is now 2.9 in beta-cloud/app.py (phones refresh themselves when it changes).
+app.py  accounts.py (new)  userctx.py (new)  agent_core.py  beta_agent.py  k10_bridge.py  k10_core.py  k10_link.py
+static/app.js  static/index.html  static/style.css  static/themes.css       tools/vivid_colors.py (optional)
 
-## beta-cloud/  -> your Render repo (replace these files; static/app.js goes in static/)
-app.py  agent_core.py  beta_agent.py  k10_bridge.py  k10_core.py  k10_link.py  static/app.js
+## What your friends get
+- Open the link, tap "Have an invite code?", enter the code you gave them + their name + a password. A short interview (3 questions)
+  shapes their B.E.T.A.; its first message is written from their answers. Passwords are stored only as salted hashes.
+- Their own chat history, memory, long-term memory, settings, theme (new accounts start on the logo colours) and notification
+  subscription. Nothing is shared between accounts.
+- A daily allowance of messages (default 50, change per friend). "Use my own free key" (menu) lifts it: they paste a Google AI
+  Studio key, it is checked with Google, stored encrypted, and used only for their messages.
+- Notifications through the browser (Web Push). ntfy stays yours. Export my data / Delete my account in their menu.
+- Not offered to friends: Termux and K-10 mail (they are tied to your phone and desktop), the admin screen, ntfy.
 
-### 1. K-10 can no longer hold up boot
-Background connection with an 8 s deadline; it switches itself off if it doesn't answer, keeps retrying (10 s ... every 5 min),
-and switches back on by itself. Named errors, a log at /api/k10/log (open while logged in), POST /api/k10/retry.
-Optional setting: K10_BOOT_TIMEOUT. More detail in alpha-web/README_K10.md.
+## What you get
+- Your login is unchanged (BETA_PASSWORD). Your data stays exactly where it is (no prefix). Menu > "Friends and invites": allowance
+  -/+ per friend, pause/resume, remove, create one-time invite codes (14 days) with a copy button.
+- A paused or removed account is logged out at once.
 
-### 2. Large text and screenshots
-- Long text used to be cut silently at 10,000 characters. Now the AI reads up to 60,000 characters (12,000 while on Groq, whose
-  free tier allows far less per minute) and is told - and so are you - when something was cut.
-  Optional settings: ATTACH_TEXT_CHARS, ATTACH_TEXT_CHARS_GROQ.
-- Pictures are kept at up to 2048 px (was 1280, which halved phone screenshots and blurred small text); transparent PNGs get a
-  white background instead of turning black; the result always stays under the server limit.
-- Chat history shows "(attached text)" for old long pastes instead of printing the whole text again on reload.
-- Old long pastes are shortened in what is sent to the model (stored history is untouched), so one big paste can't weigh down
-  every later message.
-- The clipboard button now falls back from read() to readText() instead of giving up, says exactly what happened, and Ctrl+V
-  anywhere on the page (desktop) works.
-- The small "Paste" bubble on Firefox is Firefox's own privacy rule - a web page cannot remove it.
+## Ideas 1 and 2
+- A rate-limit wait now counts down live (20, 19, 18 ... resuming) instead of sitting on one number.
+- The Enter key makes a new line; messages are sent with the send button only.
 
-### 3. More free Groq models
-Chain (tried in order; each model has its own limits, and one that hits its limit or has been retired is skipped until it recovers):
-  openai/gpt-oss-120b -> openai/gpt-oss-20b -> llama-3.3-70b-versatile -> llama-3.1-8b-instant
-Picker-only (preview): qwen/qwen3.6-27b.  Menu > Model now shows "Groq - automatic order" and each Groq model by name.
-Change the lists without editing code: GROQ_MODELS and GROQ_EXTRA_MODELS (comma separated) in Render's environment.
-Check what your account really gets at console.groq.com/settings/limits - Groq changes its free models from time to time.
+## Also in this release: everything from the earlier updates
+K-10 that can't hold up boot, Groq model chain, bigger pastes and screenshots, date/time-aware search, the ntfy fix, vivid colours
+(themes.css AND style.css now).
 
-## alpha-web/  -> your laptop
-Same as the last zip except the K-10 files. Setup steps are in alpha-web/README_K10.md.
+## Settings (all optional, Render environment)
+BETA_OWNER_NAME (default Karachi), BETA_FRIEND_DAILY_LIMIT (default 50), plus the earlier ones. Saving a friend's key needs SECRET_KEY
+(you already have it) and the 'cryptography' package (already needed for K-10).
+
+## Good to know
+- One chat is answered at a time across everyone (image/video/Termux helpers hold per-job state). A second person's message waits
+  its turn and is told "you're next".
+- Friends on the shared key share one Gemini quota; the allowance keeps that fair.
+- I couldn't see storage.py, so accounts use only store.get(key, default) / store.set(key, value). Long-term memory
+  (personal_brain.brain_manager.load_db / save_db) is redirected per account at start-up; if that module is shaped differently, friends
+  would share the owner's long-term memory - check Menu > Long-term memory as a friend.
