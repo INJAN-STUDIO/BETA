@@ -25,6 +25,8 @@ const ICONS = {
   bookmark: '<path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',
   logout: '<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>',
+  users: '<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>',
+  key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2M16 7l3 3"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
   check: '<path d="M20 6L9 17l-5-5"/>',
   alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>',
@@ -74,6 +76,7 @@ async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     const err = new Error((data && data.error) || `Request failed (${res.status})`);
     err.status = res.status;
+    err.data = data;                                   // e.g. {errors: {code: '...'}} from /api/join
     throw err;
   }
   return data;
@@ -736,7 +739,11 @@ function addGenerated(p) {
 }
 
 function updateUsage(s) {
-  if (!s || !s.models || !s.models.length) return;
+  if (!s) return;
+  if (!s.models || !s.models.length) {
+    if (!s.allowance) return;
+    s = Object.assign({}, s, { models: [{ model: '', limit: null, used: 0 }] });
+  }
   // The model order, spelled out in the menu - including whether the Groq backup is switched on.
   if (s.groq !== undefined) {
     const short = shortModel;
@@ -753,6 +760,13 @@ function updateUsage(s) {
   $('usage-fill').classList.toggle('low', pct <= 20);
   const secs = s.resets_in || 0, h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
   $('usage-reset').textContent = secs ? `resets ${h ? h + 'h ' : ''}${m}m` : '';
+  if (s.allowance) {                                  // friends see their own daily allowance instead of the model quota
+    const a = s.allowance, apct = a.own_key ? 100 : (a.limit ? Math.max(0, Math.min(100, (a.left / a.limit) * 100)) : 0);
+    $('usage-label').textContent = a.own_key ? 'Using your own key · no daily limit' : `Daily allowance · ${a.left}/${a.limit} left`;
+    $('usage-fill').style.width = apct + '%';
+    $('usage-fill').classList.toggle('low', !a.own_key && apct <= 20);
+    $('usage-reset').textContent = '';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -947,17 +961,7 @@ function autosize() {
   t.style.height = Math.min(t.scrollHeight, 120) + 'px';
 }
 $('input').addEventListener('input', autosize);
-// Enter sends; Shift+Enter makes a new line. Phone keyboards often don't report a normal
-// Enter keydown, so the "insertLineBreak" input event is caught too.
-let shiftDown = false;
-$('input').addEventListener('keydown', (e) => {
-  shiftDown = e.shiftKey;
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
-});
-$('input').addEventListener('keyup', (e) => { shiftDown = e.shiftKey; });
-$('input').addEventListener('beforeinput', (e) => {
-  if ((e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') && !shiftDown) { e.preventDefault(); send(); }
-});
+// Enter makes a new line (it no longer sends). Messages are sent with the send button only.
 
 let pendingVideos = [];     // {name, size, id, pct, xhr}
 function renderChips() {
@@ -1087,7 +1091,7 @@ function setBusy(on) {
   btn.setAttribute('aria-label', on ? 'Stop' : 'Send');
   $('state-label').textContent = on ? 'thinking…' : 'ready';
   document.querySelector('.brand .blob').classList.toggle('thinking', on);
-  if (!on) { $('activity').classList.add('hidden'); hideThinking(); }
+  if (!on) { stopCooldown(); $('activity').classList.add('hidden'); hideThinking(); }
 }
 
 async function send() {
@@ -1129,9 +1133,29 @@ async function send() {
   }
 }
 
+// A rate-limit wait used to show a frozen number ("waiting 20s" stayed on 20). Now it counts down every second.
+let cooldownTimer = null, cooldownEnd = 0;
+function stopCooldown() { if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null; } }
+function startCooldown(seconds) {
+  stopCooldown();
+  cooldownEnd = Date.now() + seconds * 1000;
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((cooldownEnd - Date.now()) / 1000));
+    $('activity-text').textContent = left > 0 ? 'Rate limit hit - resuming in ' + left + 's…' : 'Resuming…';
+    if (left <= 0) stopCooldown();
+  };
+  $('activity').classList.remove('hidden');
+  tick();
+  cooldownTimer = setInterval(tick, 250);
+}
+
 function handleEvent(ev) {
   hideThinking();
-  if (ev.type === 'activity') { $('activity-text').textContent = ev.text; $('activity').classList.remove('hidden'); }
+  if (ev.type === 'activity') {
+    const wait = /waiting\s+(\d+(?:\.\d+)?)\s*s\b/i.exec(ev.text || '');
+    if (wait) startCooldown(parseFloat(wait[1]));
+    else { stopCooldown(); $('activity-text').textContent = ev.text; $('activity').classList.remove('hidden'); }
+  }
   else if (ev.type === 'images') {
     const p = ev.payload || {};
     if (p.kind === 'videos') addVideos(p);
@@ -1145,6 +1169,7 @@ function handleEvent(ev) {
     else addGallery(p);
   }
   else if (ev.type === 'reply') {
+    stopCooldown();
     $('activity').classList.add('hidden');
     const bubble = addMessage('ai', ev.text, true);
     if (voiceOn) speak(ev.text, bubble.querySelector('.listen-btn'));
@@ -1206,6 +1231,7 @@ $('m-size').addEventListener('click', () => { sizeIdx = (sizeIdx + 1) % TEXT_SIZ
 applyTextSize();
 
 // ---- theme: logo colours (dark / light) or classic (ALPHA's original dark / light) ----
+let ME = null;          // the account that is logged in (see applyAccount)
 const THEMES = [
   { id: 'icon-dark', name: 'Logo colours · Dark', bar: '#051a22', icon: 'palette', kind: 'dark', sw: ["#051a22", "#35b6d5", "#7fe3ee"] },
   { id: 'icon-light', name: 'Logo colours · Light', bar: '#e8f5f8', icon: 'palette', kind: 'light', sw: ["#e8f5f8", "#0e6e9e", "#0b6a96"] },
@@ -1229,11 +1255,13 @@ function applyTheme() {
   $('m-theme-text').textContent = 'Theme: ' + t.name;
   setIcon($('m-theme-icon'), t.icon);
 }
-function setTheme(id) {
+function setTheme(id, persist) {
   const i = THEMES.findIndex((t) => t.id === id);
   if (i < 0) return;
   themeIdx = i;
   store.set('beta_theme', THEMES[themeIdx].id);
+  // Saved to the account too, so it follows you to any device and never changes anybody else's theme.
+  if (persist !== false && ME) api('/api/prefs', { method: 'POST', body: { theme: id } }).catch(() => {});
   const root = document.documentElement;
   root.classList.add('theme-anim'); setTimeout(() => root.classList.remove('theme-anim'), 450);   // smooth cross-fade
   applyTheme();
@@ -1645,11 +1673,25 @@ function renderTraffic(d) {
   const link = document.createElement('a'); link.textContent = "Google's own status page"; link.href = d.official_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
   foot.appendChild(link); foot.appendChild(document.createTextNode(' (it often lags behind real overloads).')); body.appendChild(foot);
 }
+let trafficBusy = false;
 async function runTraffic(force) {
-  const btn = $('traffic-refresh'); btn.disabled = true;
-  try { renderTraffic(await api('/api/gemini/status' + (force ? '?force=1' : ''))); $('traffic-note').textContent = ''; }
-  catch (e) { $('traffic-body').textContent = e.message || "Couldn't check the servers."; }
-  btn.disabled = false;
+  if (trafficBusy) { if (force) toast('Still checking - one moment…'); return; }
+  trafficBusy = true;
+  const btn = $('traffic-refresh'), body = $('traffic-body'), note = $('traffic-note');
+  btn.disabled = true; btn.classList.add('busy'); btn.textContent = 'Checking…';
+  body.classList.add('checking');
+  if (force) note.textContent = 'Asking every model again - this can take up to 25 seconds.';
+  try {
+    renderTraffic(await api('/api/gemini/status' + (force ? '?force=1' : '')));
+    note.textContent = force ? 'Updated just now ✓' : '';
+    if (force) setTimeout(() => { if (note.textContent === 'Updated just now ✓') note.textContent = ''; }, 3000);
+  } catch (e) {
+    const msg = e.message || "Couldn't check the servers.";
+    if (!body.querySelector('.tr-banner')) body.textContent = msg;                 // nothing to show yet: say what went wrong
+    note.textContent = body.querySelector('.tr-banner') ? msg + ' Tap Refresh now to try again.' : '';
+  }
+  body.classList.remove('checking'); btn.classList.remove('busy'); btn.textContent = 'Refresh now'; btn.disabled = false;
+  trafficBusy = false;
 }
 function closeTraffic() { if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; } hide('traffic'); }
 $('m-traffic').addEventListener('click', () => {
@@ -1764,13 +1806,14 @@ async function openHelp() {
   let c = {};
   try { c = await api('/api/capabilities'); } catch (e) { /* show the list without live status */ }
   const tag = (on) => on === undefined ? '' : (on ? '● on' : '○ not set up');
+  const friend = ME ? !ME.owner : c.owner === false;       // a friend's account has no phone, ALPHA or notification features
   const groups = [
     ['Talk and think', [
       ['Answers questions, explains things simply, and writes or fixes code', 'Try: "explain how DNS works like I\'m new"'],
-      ['Remembers: the last 60 messages, plus long-term memory for things worth keeping', 'Try: "remember that my laptop is a Dell E5440"'],
+      ['Remembers: the last 60 messages, plus long-term memory for things worth keeping', friend ? null : 'Try: "remember that my laptop is a Dell E5440"'],
       ['Reads aloud (Listen button) and copies a whole reply (Copy button)', null]]],
     ['Look things up', [
-      ['Searches the web, checks several sources and says when they disagree', 'Try: "what\'s new in Fedora?"'],
+      ['Searches the web, checks several sources and says when they disagree', friend ? 'Try: "what\'s the latest football news?"' : 'Try: "what\'s new in Fedora?"'],
       ['Finds and shows photos', 'Try: "show me photos of Lagos at night"', c.images_search],
       ['Plays YouTube videos in the chat, or watches one and tells you what is in it', 'Try: "what does this video say? <link>"']]],
     ['Make things', [
@@ -1786,11 +1829,11 @@ async function openHelp() {
     ['Control', [
       ['Choose the model by hand, including smarter ones for coding', null],
       ['Gemini traffic: a live check of whether Google\'s servers are busy', null],
-      ['Alerts when a reply is ready while you are away', null, c.alerts],
+      ...(friend ? [] : [['Alerts when a reply is ready while you are away', null, c.alerts]]),
       ['Themes, text size, install as an app, clear the chat, lock the app', null]]],
   ];
   body.textContent = '';
-  groups.forEach(([title, items]) => {
+  groups.filter(([title]) => !(friend && title === 'Your phone and ALPHA')).forEach(([title, items]) => {
     const h = document.createElement('div'); h.className = 'help-sec'; h.textContent = title; body.appendChild(h);
     items.forEach(([what, example, on]) => {
       const d = document.createElement('div'); d.className = 'help-it';
@@ -1926,6 +1969,7 @@ async function getPushSub() {
 let notifyMode = 'webpush';          // 'ntfy' when the server is set up to send through the ntfy app
 let ntfyOn = false;
 async function refreshNotifyMenu() {
+  if (ME && !ME.owner) { $('m-notify').classList.add('hidden'); return; }          // friends have no notification keys
   let info = null;
   try { info = await api('/api/notify/info'); } catch (e) { /* offline: fall back to browser push */ }
   if (info && info.ntfy) {
@@ -1962,6 +2006,7 @@ async function disablePush(sub) {
 }
 // Opened the app with notifications already on: make sure the server still has this phone saved.
 async function syncPushSub() {
+  if (ME && !ME.owner) return;
   if (!pushSupported || Notification.permission !== 'granted') return;
   const sub = await getPushSub();
   if (sub) api('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } }).catch(() => {});
@@ -2043,7 +2088,7 @@ $('m-memory').addEventListener('click', () => { hide('menu'); show('memory'); lo
 // ---------------------------------------------------------------------------
 // Fade one screen out as the next fades in (wake -> login -> app).
 function showOnly(id) {
-  ['wake', 'login', 'app'].forEach((s) => {
+  ['wake', 'login', 'join', 'app'].forEach((s) => {
     const el = $(s);
     if (s === id) { el.classList.remove('hidden', 'leaving'); }
     else if (!el.classList.contains('hidden')) {
@@ -2115,10 +2160,16 @@ async function startApp(fromId) {
   if (fromId) await openChatWithEffect(fromId); else showOnly('app');
   const got = await statePromise;
   if (got.e) { addMessage('error', got.e.message); return; }
-  const st = got.s;
+  let st = got.s;
+  applyAccount(st.user);
+  if (ME && !ME.owner && !ME.interview_done) {                 // a friend's first login: a short interview first
+    await runInterview();
+    const again = await api('/api/state').catch(() => null);
+    if (again) st = again;
+  }
   chat.innerHTML = '';
   if (st.setup_error) addMessage('error', st.setup_error);
-  else if (!st.history.length) addMessage('ai', "Hi Karachi, I'm **B.E.T.A.** I can search the web, find photos, watch YouTube videos, read what you attach, and remember things for you. What do you need?");
+  else if (!st.history.length) addMessage('ai', "Hi " + (ME ? ME.name : 'there') + ", I'm **B.E.T.A.** I can search the web, find photos, watch YouTube videos, read what you attach, and remember things for you. What do you need?");
   st.history.forEach((m) => addMessage(m.role === 'user' ? 'user' : 'ai', m.text));
   updateUsage(st.usage);
   scrollDown(true);
@@ -2180,6 +2231,229 @@ $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogi
 })();
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden) scrollDown(); });
+
+// ---------------------------------------------------------------------------
+// Accounts: joining with an invite, the first-login interview, the owner's friends screen, a friend's own key
+// ---------------------------------------------------------------------------
+function applyAccount(user) {
+  ME = user || null;
+  if (!ME) return;
+  if (ME.theme) setTheme(ME.theme, false);                 // this account's own theme (not saved back by this call)
+  const friend = !ME.owner;
+  $('m-friends').classList.toggle('hidden', friend);
+  ['m-key', 'm-export', 'm-delete'].forEach((id) => $(id).classList.toggle('hidden', !friend));
+  $('m-key-text').textContent = ME.own_key ? 'My own key: on (' + (ME.own_key_mask || 'saved') + ')' : 'Use my own free key';
+  if (friend) { $('m-termux').classList.add('hidden'); $('m-k10').classList.add('hidden'); $('m-notify').classList.add('hidden'); }   // tied to the owner's phone, desktop and server keys
+}
+
+// ---- joining with an invite code: a wrong field is cleared and flagged, the right ones stay filled in ----
+const JOIN_FIELDS = { code: 'join-code', name: 'join-name', password: 'join-pass' };
+const JOIN_ERR = { code: 'join-code-err', name: 'join-name-err', password: 'join-pass-err' };
+function showJoin() { showOnly('join'); setTimeout(() => $('join-code').focus(), 350); }
+async function doJoin() {
+  const body = {};
+  Object.keys(JOIN_FIELDS).forEach((k) => { body[k] = $(JOIN_FIELDS[k]).value; $(JOIN_ERR[k]).textContent = ''; });
+  body.code = body.code.trim(); body.name = body.name.trim();
+  const btn = $('join-btn');
+  btn.disabled = true; btn.classList.add('loading');
+  try {
+    await api('/api/join', { method: 'POST', body });
+    $('join-pass').value = '';
+    startApp('join');
+  } catch (e) {
+    const errs = (e.data && e.data.errors) || null;
+    if (!errs) { $(JOIN_ERR.code).textContent = e.message; return; }
+    let first = '';
+    Object.keys(errs).forEach((k) => {
+      $(JOIN_ERR[k]).textContent = errs[k];
+      if (k !== 'name') $(JOIN_FIELDS[k]).value = '';       // only what was wrong is cleared; the rest stays
+      first = first || JOIN_FIELDS[k];
+    });
+    if (first) $(first).focus();
+    const card = document.querySelector('#join .screen-card');
+    card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+  } finally { btn.disabled = false; btn.classList.remove('loading'); }
+}
+$('to-join').addEventListener('click', showJoin);
+$('to-login').addEventListener('click', showLogin);
+$('join-btn').addEventListener('click', doJoin);
+Object.values(JOIN_FIELDS).forEach((id) => $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); }));
+
+// ---- the first-login interview (friends) ----
+const IV_QS = ['How do you like my replies?', 'What are you into?', 'Anything I should always or never do?'];
+const IV_STYLES = ['Short and quick', 'Casual and funny', 'Detailed and thorough'];
+const IV_LIKES = ['Football', 'Music', 'Coding', 'Gaming', 'School', 'Business', 'Movies', 'Anime', 'Faith'];
+let IV = { q: 0, style: -1, likes: [], note: '' }, ivDone = null;
+function ivChips(options, isOn, toggle) {
+  const wrap = document.createElement('div'); wrap.className = 'iv-chips';
+  options.forEach((label, i) => {
+    const on = isOn(i);
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'iv-chip' + (on ? ' on' : '');
+    b.setAttribute('aria-pressed', String(on));
+    const text = document.createElement('span'); text.textContent = label;
+    if (on) b.innerHTML = iconSvg('check');                 // a tick as well as the highlight
+    b.appendChild(text);
+    b.addEventListener('click', () => { toggle(i); renderInterview(); });
+    wrap.appendChild(b);
+  });
+  return wrap;
+}
+function renderInterview() {
+  $('iv-progress').textContent = 'Question ' + (IV.q + 1) + ' of 3';
+  $('iv-fill').style.width = ((IV.q + 1) / 3 * 100) + '%';
+  $('iv-err').textContent = '';
+  $('iv-back').classList.toggle('hidden', IV.q === 0);
+  $('iv-next').textContent = IV.q === 2 ? 'Finish' : 'Next';
+  const body = $('iv-body'); body.textContent = '';
+  const q = document.createElement('div'); q.className = 'iv-q';
+  q.textContent = (IV.q === 0 ? 'Hi ' + ME.name + ", I'm B.E.T.A. " : '') + IV_QS[IV.q];
+  body.appendChild(q);
+  if (IV.q === 0) body.appendChild(ivChips(IV_STYLES, (i) => IV.style === i, (i) => { IV.style = i; }));
+  if (IV.q === 1) body.appendChild(ivChips(IV_LIKES, (i) => IV.likes.includes(IV_LIKES[i]), (i) => {
+    const x = IV_LIKES[i], at = IV.likes.indexOf(x); if (at < 0) IV.likes.push(x); else IV.likes.splice(at, 1);
+  }));
+  if (IV.q === 2) {
+    const t = document.createElement('textarea'); t.className = 'field'; t.id = 'iv-note'; t.rows = 3; t.maxLength = 300;
+    t.placeholder = 'Optional'; t.value = IV.note; t.addEventListener('input', () => { IV.note = t.value; });
+    body.appendChild(t);
+  }
+}
+async function finishInterview() {
+  $('iv-next').disabled = true; $('iv-skip').disabled = true;
+  try {
+    const r = await api('/api/profile', { method: 'POST', body: { style: IV.style, likes: IV.likes, note: IV.note } });
+    applyAccount(r.user);
+    hide('interview');
+    if (ivDone) { ivDone(); ivDone = null; }
+  } catch (e) { $('iv-err').textContent = e.message; }
+  finally { $('iv-next').disabled = false; $('iv-skip').disabled = false; }
+}
+function runInterview() {
+  IV = { q: 0, style: -1, likes: [], note: '' };
+  renderInterview();
+  show('interview');
+  return new Promise((resolve) => { ivDone = resolve; });
+}
+$('iv-next').addEventListener('click', () => { if (IV.q < 2) { IV.q++; renderInterview(); } else finishInterview(); });
+$('iv-back').addEventListener('click', () => { if (IV.q > 0) { IV.q--; renderInterview(); } });
+$('iv-skip').addEventListener('click', finishInterview);
+
+// ---- the owner's friends screen: allowances, pausing, removing, invite codes ----
+function textLine(t, cls) { const d = document.createElement('div'); d.className = cls || 'dim-text'; d.textContent = t; return d; }
+function miniBtn(label, onClick) { const b = document.createElement('button'); b.type = 'button'; b.className = 'mini-btn'; b.textContent = label; b.addEventListener('click', onClick); return b; }
+function codeRow(code) {
+  const row = document.createElement('div'); row.className = 'code-row';
+  const c = document.createElement('span'); c.textContent = code; row.appendChild(c);
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'icon-btn'; b.setAttribute('aria-label', 'Copy invite code'); b.title = 'Copy invite code';
+  b.innerHTML = iconSvg('copy');
+  b.addEventListener('click', async () => {
+    const ok = await copyText(code);
+    b.innerHTML = iconSvg(ok ? 'check' : 'x');
+    toast(ok ? 'Invite code copied' : 'Could not copy. Select the code and copy it by hand.', !ok);
+    setTimeout(() => { b.innerHTML = iconSvg('copy'); }, 2000);
+  });
+  row.appendChild(b);
+  return row;
+}
+async function renderAdmin(fresh) {
+  const body = $('admin-body'); body.textContent = 'Loading…';
+  let d;
+  try { d = await api('/api/admin/users'); } catch (e) { body.textContent = e.message; return; }
+  body.textContent = '';
+  body.appendChild(cardLabel('Friends'));
+  if (!d.friends.length) body.appendChild(textLine('No friends yet. Create an invite code below and send it to them.'));
+  d.friends.forEach((f) => {
+    const card = document.createElement('div'); card.className = 'admin-card';
+    const h = document.createElement('h4'); h.textContent = f.name + (f.paused ? ' (paused)' : ''); card.appendChild(h);
+    card.appendChild(textLine(f.own_key ? 'Uses their own key: no daily limit' : 'Today: ' + f.used + ' of ' + f.limit + ' messages'));
+    const row = document.createElement('div'); row.className = 'admin-row';
+    const lim = document.createElement('span'); lim.textContent = 'Daily allowance: ';
+    const num = document.createElement('b'); num.textContent = f.limit; lim.appendChild(num);
+    const set = async (body2) => { try { await api('/api/admin/user', { method: 'POST', body: Object.assign({ id: f.id }, body2) }); renderAdmin(); } catch (e) { toast(e.message, true); } };
+    const ctr = document.createElement('span');
+    ctr.appendChild(miniBtn('−', () => set({ limit: f.limit - 10 }))); ctr.appendChild(document.createTextNode(' ')); ctr.appendChild(miniBtn('+', () => set({ limit: f.limit + 10 })));
+    row.appendChild(lim); row.appendChild(ctr); card.appendChild(row);
+    const row2 = document.createElement('div'); row2.className = 'admin-row';
+    row2.appendChild(miniBtn(f.paused ? 'Resume account' : 'Pause account', () => set({ paused: !f.paused })));
+    row2.appendChild(miniBtn('Remove', async () => {
+      if (!(await askConfirm('Remove ' + f.name + '?', 'Their chats, memory and settings are erased for good.', 'Remove'))) return;
+      try { await api('/api/admin/delete', { method: 'POST', body: { id: f.id } }); renderAdmin(); } catch (e) { toast(e.message, true); }
+    }));
+    card.appendChild(row2);
+    body.appendChild(card);
+  });
+  body.appendChild(cardLabel('Invites'));
+  const make = document.createElement('button'); make.type = 'button'; make.className = 'btn-primary'; make.textContent = 'Create invite code';
+  make.addEventListener('click', async () => {
+    make.disabled = true;
+    try { const r = await api('/api/admin/invite', { method: 'POST', body: {} }); await renderAdmin(r.code); } catch (e) { toast(e.message, true); make.disabled = false; }
+  });
+  body.appendChild(make);
+  const codes = d.invites.slice(); if (fresh && !codes.includes(fresh)) codes.unshift(fresh);
+  if (codes.length) { body.appendChild(textLine('Each code works once and expires in 14 days.')); codes.forEach((c) => body.appendChild(codeRow(c))); }
+}
+$('m-friends').addEventListener('click', () => { hide('menu'); show('admin'); renderAdmin(); });
+$('admin-close').addEventListener('click', () => hide('admin'));
+
+// ---- a friend's own free key: get it, paste it, check it ----
+const KEYS = { err: '', busy: false, val: '' };
+function renderOwnKey() {
+  const body = $('ownkey-body'); body.textContent = '';
+  if (ME && ME.own_key) {
+    const card = document.createElement('div'); card.className = 'admin-card';
+    const h = document.createElement('h4'); h.textContent = 'Connected'; card.appendChild(h);
+    card.appendChild(textLine('Your Google AI Studio key ' + (ME.own_key_mask || '') + ' is on. There is no daily limit from B.E.T.A.'));
+    card.appendChild(textLine('It is stored encrypted and used only for your own messages.'));
+    const row = document.createElement('div'); row.className = 'admin-row';
+    row.appendChild(miniBtn('Remove my key', async () => {
+      try { const r = await api('/api/key/remove', { method: 'POST', body: {} }); applyAccount(r.user); refreshUsage(); renderOwnKey(); toast('Key removed'); } catch (e) { toast(e.message, true); }
+    }));
+    card.appendChild(row); body.appendChild(card);
+    return;
+  }
+  const steps = document.createElement('div'); steps.className = 'admin-card key-steps';
+  const h = document.createElement('h4'); h.textContent = 'Get your free key (about 2 minutes)'; steps.appendChild(h);
+  ['1. Sign in to Google AI Studio', '2. Tap Create API key', '3. Copy it, then come back here'].forEach((t) => steps.appendChild(textLine(t, 'key-step')));
+  const open = document.createElement('button'); open.type = 'button'; open.className = 'btn-primary'; open.textContent = 'Open Google AI Studio';
+  open.addEventListener('click', () => { window.open('https://aistudio.google.com/apikey', '_blank', 'noopener'); });
+  steps.appendChild(open); body.appendChild(steps);
+  body.appendChild(cardLabel('Paste your key'));
+  const line = document.createElement('div'); line.className = 'key-line';
+  const input = document.createElement('input'); input.className = 'field'; input.id = 'key-input'; input.placeholder = 'AIza…'; input.autocomplete = 'off'; input.spellcheck = false; input.value = KEYS.val;
+  const paste = document.createElement('button'); paste.type = 'button'; paste.className = 'icon-btn'; paste.setAttribute('aria-label', 'Paste from clipboard'); paste.title = 'Paste from clipboard'; paste.innerHTML = iconSvg('clipboard');
+  paste.addEventListener('click', async () => {
+    try { input.value = ((await navigator.clipboard.readText()) || '').trim(); KEYS.val = input.value; KEYS.err = ''; renderOwnKey(); }
+    catch (e) { toast('Tap the small Paste bubble your browser shows, or long-press the box and choose Paste.', true); }
+  });
+  line.appendChild(input); line.appendChild(paste); body.appendChild(line);
+  const err = document.createElement('div'); err.className = 'error-line'; err.textContent = KEYS.err; body.appendChild(err);
+  const check = document.createElement('button'); check.type = 'button'; check.className = 'btn-primary'; check.disabled = KEYS.busy;
+  check.textContent = KEYS.busy ? 'Checking with Google…' : 'Check and save key';
+  check.addEventListener('click', async () => {
+    KEYS.val = input.value.trim(); KEYS.err = '';
+    if (!KEYS.val) { KEYS.err = 'Paste your key first.'; renderOwnKey(); return; }
+    KEYS.busy = true; renderOwnKey();
+    try {
+      const r = await api('/api/key', { method: 'POST', body: { key: KEYS.val } });
+      KEYS.val = ''; KEYS.busy = false; applyAccount(r.user); refreshUsage(); renderOwnKey(); toast('Key works. Your daily limit is lifted.');
+    } catch (e) { KEYS.busy = false; KEYS.err = e.message; KEYS.val = ''; renderOwnKey(); }   // the wrong key is cleared, with the reason
+  });
+  body.appendChild(check);
+}
+async function refreshUsage() { try { updateUsage((await api('/api/state')).usage); } catch (e) { /* ignore */ } }
+$('m-key').addEventListener('click', () => { hide('menu'); renderOwnKey(); show('ownkey'); });
+$('ownkey-close').addEventListener('click', () => hide('ownkey'));
+
+// ---- export / delete ----
+$('m-export').addEventListener('click', () => { hide('menu'); location.href = '/api/export'; });
+$('m-delete').addEventListener('click', async () => {
+  hide('menu');
+  if (!(await askConfirm('Delete your account?', 'Your chats, memory and settings are erased for good. You can export them first.', 'Continue'))) return;
+  const pw = window.prompt('Type your password to confirm');
+  if (!pw) return;
+  try { await api('/api/account/delete', { method: 'POST', body: { password: pw } }); location.reload(); }
+  catch (e) { toast(e.message, true); }
+});
 
 (async function boot() {
   if ('serviceWorker' in navigator) {

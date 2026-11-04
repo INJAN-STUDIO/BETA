@@ -24,12 +24,34 @@ import urllib.parse
 import urllib.request
 
 TABLE = "beta_kv"
+MAX_PERMANENT_FAILS = 3     # a request the database rejects (4xx) will not start working by itself: give up after this many rounds
+
+
+def _describe(e):
+    """The error text, plus Supabase's own explanation (code / message / hint) when it sent one. The 'details' field is
+    left out on purpose: it can contain the row that failed, which may hold someone's chat."""
+    if isinstance(e, urllib.error.HTTPError):
+        try:
+            j = json.loads(e.read().decode("utf-8", "replace"))
+            why = " | ".join(str(j[k]) for k in ("code", "message", "hint") if isinstance(j, dict) and j.get(k))
+        except Exception:
+            why = ""
+        return "%s - %s" % (e, why) if why else str(e)
+    return str(e)
+
+
+def _is_permanent(e):
+    """A 4xx answer (except 'timeout' and 'slow down') means the request itself is wrong, so retrying forever only
+    fills the log. Network errors, 5xx and 429 are temporary and ARE retried."""
+    return isinstance(e, urllib.error.HTTPError) and 400 <= e.code < 500 and e.code not in (408, 429)
 
 
 class _BaseStore:
     def __init__(self):
         self._cache = {}
         self._dirty = set()
+        self._deletes = set()           # keys to remove from the database
+        self._fails = {}                # (action, key) -> how many rounds the database has refused it
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = False
@@ -44,9 +66,14 @@ class _BaseStore:
     def _write(self, key, value):
         raise NotImplementedError
 
+    def _delete(self, key):
+        raise NotImplementedError
+
     # -- public ----------------------------------------------------------
     def get(self, key, default=None):
         with self._lock:
+            if key in self._deletes:
+                return default
             if key in self._cache:
                 return json.loads(json.dumps(self._cache[key]))  # copy, so callers can't mutate the cache by accident
         try:
@@ -61,28 +88,59 @@ class _BaseStore:
             return json.loads(json.dumps(self._cache[key]))
 
     def set(self, key, value):
+        if value is None:                # the table's value column rejects null, so "empty it" means "remove the row"
+            return self.delete(key)
         with self._lock:
             self._cache[key] = json.loads(json.dumps(value))
+            self._deletes.discard(key)
             self._dirty.add(key)
         self._wake.set()
 
+    def delete(self, key):
+        """Forget a key completely: out of the memory copy, out of the write queue, and out of the database."""
+        with self._lock:
+            self._cache.pop(key, None)
+            self._dirty.discard(key)
+            self._deletes.add(key)
+        self._wake.set()
+
+    def _attempt(self, what, key, fn):
+        """Run one database call (two tries). True = finished or given up for good; False = try again next cycle."""
+        for attempt in (1, 2):
+            try:
+                fn()
+                self._fails.pop((what, key), None)
+                return True
+            except Exception as e:
+                print(f"[B.E.T.A.] storage {what} failed for '{key}' (try {attempt}): {_describe(e)}")
+                if _is_permanent(e):
+                    n = self._fails[(what, key)] = self._fails.get((what, key), 0) + 1
+                    if n >= MAX_PERMANENT_FAILS:
+                        print(f"[B.E.T.A.] storage: giving up on {what} for '{key}' - the database keeps refusing it.")
+                        self._fails.pop((what, key), None)
+                        return True
+                    return False          # no second immediate try: the same request would fail the same way
+                time.sleep(0.5)
+        return False
+
     def flush(self):
         with self._lock:
+            deletes = list(self._deletes)
             keys = list(self._dirty)
             self._dirty.clear()
+        for key in deletes:
+            if self._attempt("delete", key, lambda k=key: self._delete(k)):
+                with self._lock:
+                    self._deletes.discard(key)
         for key in keys:
             with self._lock:
-                value = self._cache.get(key)
-            for attempt in (1, 2):
-                try:
-                    self._write(key, value)
-                    break
-                except Exception as e:
-                    print(f"[B.E.T.A.] storage write failed for '{key}' (try {attempt}): {e}")
-                    time.sleep(0.5)
-            else:
+                if key not in self._cache:      # deleted while waiting
+                    continue
+                value = self._cache[key]
+            if not self._attempt("write", key, lambda k=key, v=value: self._write(k, v)):
                 with self._lock:
-                    self._dirty.add(key)  # try again on the next cycle
+                    if key in self._cache:
+                        self._dirty.add(key)   # try again on the next cycle
 
     def _writer(self):
         while not self._stop:
@@ -116,6 +174,12 @@ class FileStore(_BaseStore):
             json.dump(value, f)
         os.replace(tmp, path)
 
+    def _delete(self, key):
+        try:
+            os.remove(self._path(key))
+        except FileNotFoundError:
+            pass
+
 
 class SupabaseStore(_BaseStore):
     """Talks to Supabase's REST API (PostgREST) with plain urllib - no extra
@@ -144,6 +208,13 @@ class SupabaseStore(_BaseStore):
         headers = dict(self.headers)
         headers["Prefer"] = "resolution=merge-duplicates,return=minimal"
         req = urllib.request.Request(self.base + "?on_conflict=key", data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+
+    def _delete(self, key):
+        headers = dict(self.headers)
+        headers["Prefer"] = "return=minimal"
+        req = urllib.request.Request(self.base + "?key=eq." + urllib.parse.quote(key, safe=""), headers=headers, method="DELETE")
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp.read()
 

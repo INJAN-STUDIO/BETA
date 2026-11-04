@@ -62,7 +62,7 @@ app.config["MAX_CONTENT_LENGTH"] = max(32 * 1024 * 1024, video_store.MAX_BYTES +
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "4.0"
+APP_VERSION = "4.1"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -531,7 +531,7 @@ def _security_headers(resp):
 
 
 PUBLIC_API = {"/api/health", "/api/login", "/api/me", "/api/join"}
-OWNER_ONLY_PREFIXES = ("/api/term/", "/api/k10/", "/api/admin/", "/api/notify/ntfy")   # tied to the owner's phone, desktop and settings
+OWNER_ONLY_PREFIXES = ("/api/term/", "/api/k10/", "/api/admin/", "/api/notify/ntfy", "/api/push/")   # tied to the owner's phone, desktop and settings
 TOKEN_API = {"/api/term/next", "/api/term/result"}      # the Termux script: checked against TERM_TOKEN inside each route
 
 

@@ -362,7 +362,7 @@ def admin_update(uid, limit=None, paused=None):
 
 
 def delete_user(uid):
-    """Wipes the account and its data. (The store's values are emptied; the account entry is removed.)"""
+    """Wipes the account and its data: every per-account row is deleted, and the account entry is removed."""
     if uid == OWNER_ID:
         raise AccountError("The owner account can't be deleted.")
     with _lock:
@@ -371,7 +371,7 @@ def delete_user(uid):
         store = UserStore(_base(), prefix_of(uid))
         for key in PER_ACCOUNT_KEYS:
             try:
-                store.set(key, None)
+                store.delete(key)           # really removes the row (writing null was refused by the database)
             except Exception:
                 pass
         _users().pop(uid, None)
