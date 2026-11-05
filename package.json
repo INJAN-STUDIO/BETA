@@ -23,6 +23,8 @@
   "dependencies": {
     "@capacitor/android": "^8.6.0",
     "@capacitor/cli": "^8.6.0",
-    "@capacitor/core": "^8.6.0"
+    "@capacitor/clipboard": "^8.0.0",
+    "@capacitor/core": "^8.6.0",
+    "@capgo/capacitor-speech-recognition": "^8.0.0"
   }
 }

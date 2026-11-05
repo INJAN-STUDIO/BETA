@@ -1,0 +1,120 @@
+name: Build Android APK
+
+# Builds the B.E.T.A. app for you in GitHub's cloud, so nothing heavy runs on your phone.
+# Run it by hand: GitHub -> Actions -> "Build Android APK" -> Run workflow. The APK is in the run's "Artifacts".
+# You only need a new APK when capacitor.config.json or the android/ folder changes. Website updates reach the app by themselves.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - capacitor.config.json
+      - package.json
+      - www/**
+      - android/**
+      - .github/workflows/build-apk.yml
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22          # Capacitor 8 needs Node 22 or newer
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21          # Capacitor 8 builds with Java 21
+
+      - name: Install packages
+        run: npm install
+
+      - name: Create or update the Android project
+        run: |
+          # An android/ folder without gradlew is incomplete (parts were left out of the repo): start it fresh.
+          if [ ! -f android/gradlew ]; then rm -rf android; npx cap add android; fi
+          npx cap sync android
+
+      - name: Make and apply the B.E.T.A. app icon
+        run: |
+          # The icon is made here from the 512px icon your website already uses (static/icon-512.png), so no extra folder is needed.
+          ICON=$(find . -name icon-512.png -not -path "./node_modules/*" -not -path "./android/*" | head -1)
+          if [ -z "$ICON" ]; then
+            echo "icon-512.png not found in the repo - building with the default icon."
+          else
+            echo "Using $ICON"
+            pip install --quiet pillow
+            ICON="$ICON" python3 - <<'PY'
+          import os
+          from PIL import Image, ImageDraw, ImageFilter
+          src = Image.open(os.environ["ICON"]).convert("RGB")
+          res = "android/app/src/main/res"
+          SCALE = 0.62        # how much of the icon area the original picture fills (smaller = smaller B)
+          w = src.size[0]
+          n = round(w / SCALE)
+          def cpatch(img, x, y, k=12):
+              px = [img.getpixel((x + i, y + j)) for i in range(k) for j in range(k)]
+              return tuple(sum(c[q] for c in px) // len(px) for q in range(3))
+          tl, tr = cpatch(src, 2, 2), cpatch(src, w - 14, 2)
+          bl, br = cpatch(src, 2, w - 14), cpatch(src, w - 14, w - 14)
+          grad = Image.linear_gradient("L").resize((n, n))                 # black (top) -> white (bottom)
+          hgrad = grad.rotate(90)        # black (left) -> white (right)
+          solid = lambda c: Image.new("RGB", (n, n), c)
+          top = Image.composite(solid(tr), solid(tl), hgrad)
+          bot = Image.composite(solid(br), solid(bl), hgrad)
+          bgimg = Image.composite(bot, top, grad)                           # smooth colour fade between the four corners
+          mask = Image.new("L", src.size, 0)
+          ImageDraw.Draw(mask).rectangle((w // 14, w // 14, w - w // 14, w - w // 14), fill=255)
+          mask = mask.filter(ImageFilter.GaussianBlur(w // 22))
+          off = (n - w) // 2
+          ext = bgimg.copy()
+          ext.paste(src, (off, off), mask)
+          def patch(x, y, k=12):
+              px = [ext.getpixel((x + i, y + j)) for i in range(k) for j in range(k)]
+              return tuple(sum(c[q] for c in px) // len(px) for q in range(3))
+          corners = [patch(4, 4), patch(n - 16, 4), patch(4, n - 16), patch(n - 16, n - 16)]
+          bg = tuple(sum(c[q] for c in corners) // 4 for q in range(3))
+          dens = {"mdpi": (48, 108), "hdpi": (72, 162), "xhdpi": (96, 216), "xxhdpi": (144, 324), "xxxhdpi": (192, 432)}
+          crop = int(n * 0.80); c0 = (n - crop) // 2
+          legacy_src = ext.crop((c0, c0, c0 + crop, c0 + crop))
+          for name, (legacy, fg) in dens.items():
+              d = "%s/mipmap-%s" % (res, name); os.makedirs(d, exist_ok=True)
+              legacy_src.resize((legacy, legacy), Image.LANCZOS).save(d + "/ic_launcher.png")
+              big = legacy_src.resize((legacy * 4, legacy * 4), Image.LANCZOS)
+              m = Image.new("L", big.size, 0); ImageDraw.Draw(m).ellipse((0, 0, big.size[0] - 1, big.size[1] - 1), fill=255)
+              r = Image.new("RGBA", big.size, (0, 0, 0, 0)); r.paste(big, (0, 0), m)
+              r.resize((legacy, legacy), Image.LANCZOS).save(d + "/ic_launcher_round.png")
+              ext.resize((fg, fg), Image.LANCZOS).save(d + "/ic_launcher_foreground.png")
+          os.makedirs(res + "/values", exist_ok=True)
+          open(res + "/values/ic_launcher_background.xml", "w").write(
+              '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#%02X%02X%02X</color>\n</resources>\n' % bg)
+          print("App icon applied.")
+          PY
+          fi
+          echo "--- icon files in the Android project ---"
+          ls -R android/app/src/main/res | grep -i "launcher\|mipmap\|ic_" || true
+          echo "--- adaptive icon definition ---"
+          cat android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml 2>/dev/null || echo "(none)"
+          echo "--- icon named in the manifest ---"
+          grep -n "icon" android/app/src/main/AndroidManifest.xml || true
+
+      - name: Allow the microphone (voice input)
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          if ! grep -q "android.speech.RecognitionService" "$M"; then
+            sed -i 's#<application#<uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <queries><intent><action android:name="android.speech.RecognitionService" /></intent></queries>\n    <application#' "$M"
+          fi
+          grep -n "RECORD_AUDIO\|RecognitionService" "$M" || true
+
+      - name: Build the APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk

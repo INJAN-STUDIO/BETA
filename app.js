@@ -927,9 +927,34 @@ function refreshVoiceMenu() {
   $('m-voice-text').textContent = 'Read replies aloud (Brian): ' + (voiceOn ? 'on' : 'off');
 }
 
+// Inside the Android app (Capacitor) the phone's own clipboard and speech-recognition services are used, because the
+// browser versions of both are blocked in an Android WebView. In a normal browser nothing here changes.
+const NATIVE = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+const nativePlugin = (name) => (NATIVE && window.Capacitor.Plugins && window.Capacitor.Plugins[name]) || null;
+
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog = null, listening = false;
-if (Recognition) {
+const nativeSpeech = nativePlugin('SpeechRecognition');
+if (nativeSpeech) {
+  $('mic-btn').classList.remove('hidden');
+  $('mic-btn').addEventListener('click', async () => {
+    if (listening) { try { await nativeSpeech.stop(); } catch (e) { /* already stopped */ } return; }
+    try {
+      const av = await nativeSpeech.available();
+      if (!av || !av.available) { toast("Voice input isn't available on this phone. Use the microphone on your keyboard instead.", true); return; }
+      let perm = await nativeSpeech.checkPermissions();
+      if (!perm || perm.speechRecognition !== 'granted') perm = await nativeSpeech.requestPermissions();
+      if (!perm || perm.speechRecognition !== 'granted') { toast('Microphone permission was not given. You can allow it in the phone settings for B.E.T.A.', true); return; }
+      listening = true; $('mic-btn').classList.add('active');
+      const r = await nativeSpeech.start({ language: navigator.language || 'en-US', maxResults: 1, partialResults: false, popup: false });
+      const text = r && r.matches && r.matches[0];
+      if (text) { $('input').value = text; autosize(); send(); }
+      else toast("Didn't catch that. Tap the microphone and try again.");
+    } catch (e) {
+      toast("Voice input didn't work: " + ((e && e.message) || 'unknown problem') + '. You can use the microphone on your keyboard instead.', true);
+    } finally { listening = false; $('mic-btn').classList.remove('active'); }
+  });
+} else if (Recognition && !NATIVE) {
   $('mic-btn').classList.remove('hidden');
   $('mic-btn').addEventListener('click', () => {
     if (listening) { recog.stop(); return; }
@@ -1320,7 +1345,7 @@ async function showInstallHelp() {
   if (!window.visualViewport) missing.push('keyboard fitting');
   if (!navigator.clipboard) missing.push('clipboard (fallback used)');
   if (!window.speechSynthesis) missing.push('read-aloud');
-  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) missing.push('voice input');
+  if (!(window.SpeechRecognition || window.webkitSpeechRecognition || nativePlugin('SpeechRecognition'))) missing.push('voice input');
   if (!window.createImageBitmap) missing.push('fast photo shrinking (fallback used)');
   lines.push(missing.length ? 'Not available in this browser: ' + missing.join(', ') : 'Browser features: everything B.E.T.A. uses is available');
   lines.push(window.isSecureContext ? 'Secure connection (https): yes' : 'Secure connection (https): NO - installing needs https');
@@ -1905,6 +1930,21 @@ document.addEventListener('paste', (e) => {
 // Firefox always shows its own small "Paste" bubble before a page may read the clipboard - that is Firefox's privacy rule
 // and a page cannot skip it (Chrome lets you allow clipboard access once).
 $('paste-btn').addEventListener('click', async () => {
+  const nativeClip = nativePlugin('Clipboard');
+  if (nativeClip) {                                           // the Android app: read the phone's clipboard directly
+    try {
+      const r = await nativeClip.read();
+      const v = r && r.value;
+      if (!v) { toast('The clipboard is empty'); return; }
+      if (/^data:image\//.test(v) || /^image\//.test(r.type || '')) {
+        const blob = await (await fetch(/^data:/.test(v) ? v : 'data:' + r.type + ';base64,' + v)).blob();
+        await addPastedImage(new File([blob], 'pasted', { type: blob.type || 'image/png' }));
+      } else { await pasteText(v); }
+      return;
+    } catch (e) { /* fall through to the long-press hint below */ }
+    toast("Couldn't read the clipboard. Long-press the message box and choose Paste.", true);
+    $('input').focus(); return;
+  }
   if (/firefox|fxios|fennec/i.test(navigator.userAgent) && !pasteHinted) { pasteHinted = true; toast('Firefox asks first: tap the small "Paste" bubble that appears.'); }
   const clip = navigator.clipboard;
   let denied = false;
