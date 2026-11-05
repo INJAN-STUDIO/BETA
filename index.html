@@ -22,7 +22,7 @@
 <div id="wake" class="screen">
   <div class="screen-card">
     <div class="logo-wrap"><img class="logo-img" src="/static/logo.jpg" alt="B.E.T.A" width="116" height="116"><span class="logo-ring"></span></div>
-    <div class="screen-title">B.E.T.A</div>
+    <div class="screen-title"><svg class="wordmark wm-big" viewBox="-2 0 112 28" role="img" aria-label="B.E.T.A" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2L2 26"/><path d="M2 2L10 2Q16.5 2 16.5 8Q16.5 14 10 14L2 14"/><path d="M2 14L11 14Q18.5 14 18.5 20Q18.5 26 11 26L2 26"/><path d="M45 2L31 2L31 26L45 26"/><path d="M31 14L42 14"/><path d="M57 2L75 2"/><path d="M66 2L66 26"/><path d="M87 26L97 2L107 26"/><path d="M90.6 18L103.4 18"/><circle cx="24.75" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="51" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="81" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/></svg></div>
     <div id="wake-text" class="screen-sub">Connecting…</div>
     <div class="spinner"></div>
   </div>
@@ -32,11 +32,29 @@
 <div id="login" class="screen hidden">
   <div class="screen-card">
     <div class="logo-wrap"><img class="logo-img" src="/static/logo.jpg" alt="B.E.T.A" width="116" height="116"><span class="logo-ring"></span></div>
-    <div class="screen-title">B.E.T.A</div>
+    <div class="screen-title"><svg class="wordmark wm-big" viewBox="-2 0 112 28" role="img" aria-label="B.E.T.A" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2L2 26"/><path d="M2 2L10 2Q16.5 2 16.5 8Q16.5 14 10 14L2 14"/><path d="M2 14L11 14Q18.5 14 18.5 20Q18.5 26 11 26L2 26"/><path d="M45 2L31 2L31 26L45 26"/><path d="M31 14L42 14"/><path d="M57 2L75 2"/><path d="M66 2L66 26"/><path d="M87 26L97 2L107 26"/><path d="M90.6 18L103.4 18"/><circle cx="24.75" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="51" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="81" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/></svg></div>
     <div class="screen-sub">Best Everyday Technical Assistant</div>
     <input id="password" class="field" type="password" placeholder="Password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
     <button id="login-btn" class="btn-primary"><span data-icon="unlock"></span>Unlock</button>
     <div id="login-error" class="error-line"></div>
+    <button id="to-join" class="link-btn" type="button">Have an invite code?</button>
+  </div>
+</div>
+
+<!-- Join with an invite code -->
+<div id="join" class="screen hidden">
+  <div class="screen-card">
+    <div class="logo-wrap"><img class="logo-img" src="/static/logo.jpg" alt="B.E.T.A" width="116" height="116"><span class="logo-ring"></span></div>
+    <div class="screen-title"><svg class="wordmark wm-big" viewBox="-2 0 112 28" role="img" aria-label="B.E.T.A" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2L2 26"/><path d="M2 2L10 2Q16.5 2 16.5 8Q16.5 14 10 14L2 14"/><path d="M2 14L11 14Q18.5 14 18.5 20Q18.5 26 11 26L2 26"/><path d="M45 2L31 2L31 26L45 26"/><path d="M31 14L42 14"/><path d="M57 2L75 2"/><path d="M66 2L66 26"/><path d="M87 26L97 2L107 26"/><path d="M90.6 18L103.4 18"/><circle cx="24.75" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="51" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="81" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/></svg></div>
+    <div class="screen-sub">Create your own B.E.T.A.</div>
+    <input id="join-code" class="field" placeholder="Invite code" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false">
+    <div id="join-code-err" class="error-line"></div>
+    <input id="join-name" class="field" placeholder="Your name" autocomplete="given-name" maxlength="30">
+    <div id="join-name-err" class="error-line"></div>
+    <input id="join-pass" class="field" type="password" placeholder="Choose a password (6+ characters)" autocomplete="new-password">
+    <div id="join-pass-err" class="error-line"></div>
+    <button id="join-btn" class="btn-primary"><span data-icon="unlock"></span>Create my B.E.T.A.</button>
+    <button id="to-login" class="link-btn" type="button">Back to log in</button>
   </div>
 </div>
 
@@ -46,7 +64,7 @@
     <div class="brand">
       <div class="blob"></div>
       <div>
-        <div class="brand-name">B.E.T.A</div>
+        <div class="brand-name"><svg class="wordmark wm-small" viewBox="-2 0 112 28" role="img" aria-label="B.E.T.A" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2L2 26"/><path d="M2 2L10 2Q16.5 2 16.5 8Q16.5 14 10 14L2 14"/><path d="M2 14L11 14Q18.5 14 18.5 20Q18.5 26 11 26L2 26"/><path d="M45 2L31 2L31 26L45 26"/><path d="M31 14L42 14"/><path d="M57 2L75 2"/><path d="M66 2L66 26"/><path d="M87 26L97 2L107 26"/><path d="M90.6 18L103.4 18"/><circle cx="24.75" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="51" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/><circle cx="81" cy="25.3" r="1.9" fill="currentColor" stroke="none" opacity=".75"/></svg></div>
         <div class="brand-sub" id="state-label">ready</div>
       </div>
     </div>
@@ -67,24 +85,27 @@
   <footer class="composer">
     <div id="attach-row" class="attach-row hidden"></div>
     <div class="composer-pill">
-      <textarea id="input" class="input" rows="1" placeholder="Ask B.E.T.A. something…" enterkeyhint="send"></textarea>
+      <textarea id="input" class="input" rows="1" placeholder="Ask B.E.T.A. something…" enterkeyhint="enter"></textarea>
       <div class="composer-row">
         <div class="composer-left">
           <button id="attach-btn" class="icon-btn" aria-label="Attach" data-icon="clip"></button>
+          <button id="paste-btn" class="icon-btn" aria-label="Paste from clipboard" data-icon="clipboard"></button>
           <button id="mic-btn" class="icon-btn hidden" aria-label="Speak" data-icon="mic"></button>
         </div>
         <button id="send-btn" class="send-btn" aria-label="Send" data-icon="send"></button>
       </div>
     </div>
-    <input id="file-input" type="file" accept="image/*,.txt,.md,.py,.js,.json,.csv,.html,.css,.xml,.yaml,.yml,.sh,.log,.docx" multiple hidden>
+    <input id="file-input" type="file" accept="image/*,video/*,.mp4,.mov,.webm,.3gp,.mkv,.txt,.md,.py,.js,.json,.csv,.html,.css,.xml,.yaml,.yml,.sh,.log,.docx" multiple hidden>
   </footer>
 </div>
 
 <!-- Menu -->
 <div id="menu" class="overlay hidden">
-  <div class="sheet">
+  <div class="sheet menu-sheet">
     <div class="sheet-title">Menu</div>
+    <div class="menu-scroll">
     <button class="sheet-item" id="m-memory"><span data-icon="bookmark"></span>Long-term memory</button>
+    <button class="sheet-item" id="m-help"><span data-icon="help"></span>What can B.E.T.A. do?</button>
     <button class="sheet-item" id="m-voice"><span id="m-voice-icon" data-icon="speaker"></span><span id="m-voice-text">Read replies aloud (Brian): off</span></button>
     <button class="sheet-item" id="m-notify"><span id="m-notify-icon" data-icon="bell-off"></span><span id="m-notify-text">Notify me when a reply is ready: off</span></button>
     <button class="sheet-item hidden" id="m-termux"><span data-icon="terminal"></span><span id="m-termux-text">Termux: checking…</span></button>
@@ -93,12 +114,58 @@
     <button class="sheet-item hidden" id="m-k10"><span data-icon="mail"></span><span id="m-k10-text">K-10 mail</span></button>
     <button class="sheet-item" id="m-theme"><span id="m-theme-icon" data-icon="palette"></span><span id="m-theme-text">Theme: Logo colours · Dark</span></button>
     <button class="sheet-item" id="m-size"><span data-icon="text"></span><span id="m-size-text">Text size: Medium</span></button>
-    <button class="sheet-item" id="m-install"><span data-icon="download"></span><span>Install as an app</span></button>
+    <button class="sheet-item hidden" id="m-friends"><span data-icon="users"></span>Friends and invites</button>
+    <button class="sheet-item hidden" id="m-key"><span data-icon="key"></span><span id="m-key-text">Use my own free key</span></button>
+    <button class="sheet-item hidden" id="m-export"><span data-icon="download"></span>Export my data</button>
+    <button class="sheet-item hidden" id="m-delete"><span data-icon="trash"></span>Delete my account</button>
     <button class="sheet-item" id="m-clear"><span data-icon="trash"></span>Clear this conversation</button>
     <button class="sheet-item" id="m-logout"><span data-icon="lock"></span>Lock B.E.T.A.</button>
     <div class="sheet-models" id="m-models"></div>
     <div class="sheet-version" id="m-version"></div>
+    </div>
     <button class="sheet-close" id="menu-close">Close</button>
+  </div>
+</div>
+
+<!-- What can B.E.T.A. do? -->
+<div id="help" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">What B.E.T.A. can do</div>
+    <div id="help-body" class="sheet-scroll"></div>
+    <button class="sheet-close" id="help-close">Close</button>
+  </div>
+</div>
+
+<!-- Pick a theme -->
+<div id="themes" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Theme</div>
+    <div id="themes-body" class="sheet-scroll"></div>
+    <button class="sheet-close" id="themes-close">Close</button>
+  </div>
+</div>
+
+<!-- Pasted text, in full -->
+<div id="pasteview" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Pasted text</div>
+    <div id="pasteview-body" class="sheet-scroll k10-text" style="max-height:none"></div>
+    <div class="tc-actions" style="margin:10px 0 4px">
+      <button class="fc-btn danger" id="pasteview-remove">Remove it</button>
+      <button class="fc-btn primary" id="pasteview-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Are you sure? -->
+<div id="confirm" class="overlay hidden">
+  <div class="sheet">
+    <div class="sheet-title" id="confirm-title">Are you sure?</div>
+    <div id="confirm-text" class="sheet-text"></div>
+    <div class="tc-actions" style="margin:12px 0 4px">
+      <button class="fc-btn danger" id="confirm-yes">Yes</button>
+      <button class="fc-btn primary" id="confirm-no">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -132,12 +199,36 @@
   </div>
 </div>
 
-<!-- Install help (Firefox/Fennec have no install pop-up, so this says exactly what to tap) -->
-<div id="install" class="overlay hidden">
-  <div class="sheet">
-    <div class="sheet-title">Install B.E.T.A.</div>
-    <div id="install-body" class="sheet-text"></div>
-    <button class="sheet-close" id="install-close">Close</button>
+<!-- First-login interview (friends) -->
+<div id="interview" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Let's set up your B.E.T.A.</div>
+    <div class="meter" style="margin:2px 0 10px"><span id="iv-progress" class="meter-label">Question 1 of 3</span><div class="meter-track"><div id="iv-fill" class="meter-fill"></div></div></div>
+    <div id="iv-body" class="sheet-scroll"></div>
+    <div id="iv-err" class="error-line"></div>
+    <div class="tc-actions" style="margin:10px 0 4px">
+      <button class="fc-btn" id="iv-skip">Skip</button>
+      <button class="fc-btn" id="iv-back">Back</button>
+      <button class="fc-btn primary" id="iv-next">Next</button>
+    </div>
+  </div>
+</div>
+
+<!-- Friends and invites (owner) -->
+<div id="admin" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Friends and invites</div>
+    <div id="admin-body" class="sheet-scroll"></div>
+    <button class="sheet-close" id="admin-close">Close</button>
+  </div>
+</div>
+
+<!-- A friend's own free key -->
+<div id="ownkey" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Use my own free key</div>
+    <div id="ownkey-body" class="sheet-scroll"></div>
+    <button class="sheet-close" id="ownkey-close">Close</button>
   </div>
 </div>
 

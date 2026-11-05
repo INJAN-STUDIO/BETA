@@ -929,8 +929,14 @@ function refreshVoiceMenu() {
 
 // Inside the Android app (Capacitor) the phone's own clipboard and speech-recognition services are used, because the
 // browser versions of both are blocked in an Android WebView. In a normal browser nothing here changes.
-const NATIVE = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
-const nativePlugin = (name) => (NATIVE && window.Capacitor.Plugins && window.Capacitor.Plugins[name]) || null;
+const NATIVE = !!(window.Capacitor && (
+  (typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()) ||
+  (typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() !== 'web')));
+const nativePlugin = (name) => {
+  if (!NATIVE || !window.Capacitor.Plugins) return null;
+  if (typeof window.Capacitor.isPluginAvailable === 'function' && !window.Capacitor.isPluginAvailable(name)) return null;
+  return window.Capacitor.Plugins[name] || null;
+};
 
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog = null, listening = false;
@@ -954,7 +960,10 @@ if (nativeSpeech) {
       toast("Voice input didn't work: " + ((e && e.message) || 'unknown problem') + '. You can use the microphone on your keyboard instead.', true);
     } finally { listening = false; $('mic-btn').classList.remove('active'); }
   });
-} else if (Recognition && !NATIVE) {
+} else if (NATIVE) {
+  $('mic-btn').classList.remove('hidden');
+  $('mic-btn').addEventListener('click', () => toast('Voice input is missing from this version of the app. Install the newest APK, or use the microphone on your keyboard.', true));
+} else if (Recognition) {
   $('mic-btn').classList.remove('hidden');
   $('mic-btn').addEventListener('click', () => {
     if (listening) { recog.stop(); return; }
@@ -1310,63 +1319,6 @@ function openThemes() {
 $('m-theme').addEventListener('click', () => { hide('menu'); openThemes(); });
 $('themes-close').addEventListener('click', () => hide('themes'));
 applyTheme();
-
-// ---- install as an app ----
-// Chrome-type browsers fire "beforeinstallprompt" and we can open their install dialog. Firefox and
-// Fennec never do, so there the sheet just says exactly what to tap - and checks the things that
-// make Firefox hide the Install item (no service worker, private tab, not https).
-let installEvent = null;
-const isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; });
-window.addEventListener('appinstalled', () => { installEvent = null; toast('B.E.T.A. installed'); $('m-install').classList.add('hidden'); });
-if (isStandalone()) $('m-install').classList.add('hidden');
-
-function step(n, text) {
-  const row = document.createElement('div'); row.className = 'step';
-  const num = document.createElement('span'); num.className = 'num'; num.textContent = n;
-  const t = document.createElement('span'); t.textContent = text;
-  row.appendChild(num); row.appendChild(t);
-  return row;
-}
-async function showInstallHelp() {
-  const body = $('install-body');
-  body.innerHTML = '';
-  const firefox = /Firefox|Fennec/i.test(navigator.userAgent);
-  const p = document.createElement('p');
-  p.textContent = firefox ? 'In Fennec / Firefox:' : 'In your browser:';
-  body.appendChild(p);
-  body.appendChild(step(1, 'Tap the \u22EE menu (top right of the browser).'));
-  body.appendChild(step(2, firefox ? "Tap Install. (It appears in place of \"Add to Home screen\" when the app qualifies.)" : 'Tap Install app, or Add to Home screen.'));
-  body.appendChild(step(3, 'Confirm. B.E.T.A. gets its own icon and opens full-screen.'));
-  let reg = null;
-  try { reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null; } catch (e) { /* blocked */ }
-  const lines = [];
-  const missing = [];
-  if (!window.visualViewport) missing.push('keyboard fitting');
-  if (!navigator.clipboard) missing.push('clipboard (fallback used)');
-  if (!window.speechSynthesis) missing.push('read-aloud');
-  if (!(window.SpeechRecognition || window.webkitSpeechRecognition || nativePlugin('SpeechRecognition'))) missing.push('voice input');
-  if (!window.createImageBitmap) missing.push('fast photo shrinking (fallback used)');
-  lines.push(missing.length ? 'Not available in this browser: ' + missing.join(', ') : 'Browser features: everything B.E.T.A. uses is available');
-  lines.push(window.isSecureContext ? 'Secure connection (https): yes' : 'Secure connection (https): NO - installing needs https');
-  lines.push('serviceWorker' in navigator ? 'Offline helper: ' + (reg ? 'ready' : 'not registered yet - reload once, wait a few seconds, then try the menu again') : 'Offline helper: BLOCKED by this browser (a Private tab or strict privacy setting) - Install will not appear until it is allowed');
-  lines.push('Currently installed: ' + (isStandalone() ? 'yes' : 'no'));
-  const status = document.createElement('div'); status.className = 'status'; status.textContent = lines.join('\n'); status.style.whiteSpace = 'pre-line';
-  body.appendChild(status);
-  show('install');
-}
-$('m-install').addEventListener('click', async () => {
-  hide('menu');
-  if (installEvent) {                       // Chrome-type browsers: open the real install dialog
-    installEvent.prompt();
-    try { await installEvent.userChoice; } catch (e) { /* dismissed */ }
-    installEvent = null;
-    return;
-  }
-  showInstallHelp();
-});
-$('install-close').addEventListener('click', () => hide('install'));
-$('install').addEventListener('click', (e) => { if (e.target === $('install')) hide('install'); });
 
 $('m-voice').addEventListener('click', () => {
   voiceOn = !voiceOn; store.set('beta_voice', voiceOn ? '1' : '0');
@@ -1855,7 +1807,7 @@ async function openHelp() {
       ['Choose the model by hand, including smarter ones for coding', null],
       ['Gemini traffic: a live check of whether Google\'s servers are busy', null],
       ...(friend ? [] : [['Alerts when a reply is ready while you are away', null, c.alerts]]),
-      ['Themes, text size, install as an app, clear the chat, lock the app', null]]],
+      ['Themes, text size, clear the chat, lock the app', null]]],
   ];
   body.textContent = '';
   groups.filter(([title]) => !(friend && title === 'Your phone and ALPHA')).forEach(([title, items]) => {
@@ -1931,6 +1883,10 @@ document.addEventListener('paste', (e) => {
 // and a page cannot skip it (Chrome lets you allow clipboard access once).
 $('paste-btn').addEventListener('click', async () => {
   const nativeClip = nativePlugin('Clipboard');
+  if (NATIVE && !nativeClip) {
+    toast('Paste is missing from this version of the app. Install the newest APK, or long-press the message box and choose Paste.', true);
+    $('input').focus(); return;
+  }
   if (nativeClip) {                                           // the Android app: read the phone's clipboard directly
     try {
       const r = await nativeClip.read();
@@ -1941,7 +1897,7 @@ $('paste-btn').addEventListener('click', async () => {
         await addPastedImage(new File([blob], 'pasted', { type: blob.type || 'image/png' }));
       } else { await pasteText(v); }
       return;
-    } catch (e) { /* fall through to the long-press hint below */ }
+    } catch (e) { console.warn('clipboard plugin:', e); }
     toast("Couldn't read the clipboard. Long-press the message box and choose Paste.", true);
     $('input').focus(); return;
   }
