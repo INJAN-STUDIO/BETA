@@ -34,7 +34,8 @@ jobs:
 
       - name: Create or update the Android project
         run: |
-          if [ ! -d android ]; then npx cap add android; fi
+          # An android/ folder without gradlew is incomplete (parts were left out of the repo): start it fresh.
+          if [ ! -f android/gradlew ]; then rm -rf android; npx cap add android; fi
           npx cap sync android
 
       - name: Apply the B.E.T.A. app icon
