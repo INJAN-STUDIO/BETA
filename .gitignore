@@ -3,3 +3,6 @@ __pycache__/
 data/
 .env
 tests/*.png
+node_modules/
+android/build/
+android/.gradle/

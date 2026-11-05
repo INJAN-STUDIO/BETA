@@ -1,0 +1,52 @@
+name: Build Android APK
+
+# Builds the B.E.T.A. app for you in GitHub's cloud, so nothing heavy runs on your phone.
+# Run it by hand: GitHub -> Actions -> "Build Android APK" -> Run workflow. The APK is in the run's "Artifacts".
+# You only need a new APK when capacitor.config.json or the android/ folder changes. Website updates reach the app by themselves.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - capacitor.config.json
+      - package.json
+      - www/**
+      - icons/**
+      - android/**
+      - .github/workflows/build-apk.yml
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22          # Capacitor 8 needs Node 22 or newer
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21          # Capacitor 8 builds with Java 21
+
+      - name: Install packages
+        run: npm install
+
+      - name: Create or update the Android project
+        run: |
+          if [ ! -d android ]; then npx cap add android; fi
+          npx cap sync android
+
+      - name: Apply the B.E.T.A. app icon
+        run: cp -r icons/res/. android/app/src/main/res/
+
+      - name: Build the APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk

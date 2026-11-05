@@ -1,10 +1,13 @@
 {
   "appId": "com.beta.app",
-  "appName": "BETA",
+  "appName": "B.E.T.A.",
   "webDir": "www",
+  "backgroundColor": "#0b1220",
   "server": {
     "url": "https://beta-033v.onrender.com/",
     "allowNavigation": ["beta-033v.onrender.com"]
   },
-  "bundledWebRuntime": false
+  "android": {
+    "allowMixedContent": false
+  }
 }
