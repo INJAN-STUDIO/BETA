@@ -46,6 +46,12 @@ jobs:
           else
             echo "No icons/res folder in the repo - building with the default icon."
           fi
+          echo "--- icon files in the Android project ---"
+          ls -R android/app/src/main/res | grep -i "launcher\|mipmap\|ic_" || true
+          echo "--- adaptive icon definition ---"
+          cat android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml 2>/dev/null || echo "(none)"
+          echo "--- icon named in the manifest ---"
+          grep -n "icon" android/app/src/main/AndroidManifest.xml || true
 
       - name: Build the APK
         working-directory: android
