@@ -10,7 +10,6 @@ on:
       - capacitor.config.json
       - package.json
       - www/**
-      - icons/**
       - android/**
       - .github/workflows/build-apk.yml
 
@@ -38,13 +37,43 @@ jobs:
           if [ ! -f android/gradlew ]; then rm -rf android; npx cap add android; fi
           npx cap sync android
 
-      - name: Apply the B.E.T.A. app icon
+      - name: Make and apply the B.E.T.A. app icon
         run: |
-          if [ -d icons/res ]; then
-            cp -r icons/res/. android/app/src/main/res/
-            echo "App icon applied."
+          # The icon is made here from the 512px icon your website already uses (static/icon-512.png), so no extra folder is needed.
+          ICON=$(find . -name icon-512.png -not -path "./node_modules/*" -not -path "./android/*" | head -1)
+          if [ -z "$ICON" ]; then
+            echo "icon-512.png not found in the repo - building with the default icon."
           else
-            echo "No icons/res folder in the repo - building with the default icon."
+            echo "Using $ICON"
+            pip install --quiet pillow
+            ICON="$ICON" python3 - <<'PY'
+          import os
+          from PIL import Image, ImageDraw
+          src = Image.open(os.environ["ICON"]).convert("RGB")
+          res = "android/app/src/main/res"
+          def patch(x, y, n=12):
+              px = [src.getpixel((x + i, y + j)) for i in range(n) for j in range(n)]
+              return tuple(sum(c[k] for c in px) // len(px) for k in range(3))
+          w, h = src.size
+          corners = [patch(4, 4), patch(w - 16, 4), patch(4, h - 16), patch(w - 16, h - 16)]
+          bg = tuple(sum(c[k] for c in corners) // 4 for k in range(3))
+          dens = {"mdpi": (48, 108), "hdpi": (72, 162), "xhdpi": (96, 216), "xxhdpi": (144, 324), "xxxhdpi": (192, 432)}
+          for name, (legacy, fg) in dens.items():
+              d = "%s/mipmap-%s" % (res, name)
+              os.makedirs(d, exist_ok=True)
+              src.resize((legacy, legacy), Image.LANCZOS).save(d + "/ic_launcher.png")
+              big = src.resize((legacy * 4, legacy * 4), Image.LANCZOS)
+              mask = Image.new("L", big.size, 0)
+              ImageDraw.Draw(mask).ellipse((0, 0, big.size[0] - 1, big.size[1] - 1), fill=255)
+              rnd = Image.new("RGBA", big.size, (0, 0, 0, 0))
+              rnd.paste(big, (0, 0), mask)
+              rnd.resize((legacy, legacy), Image.LANCZOS).save(d + "/ic_launcher_round.png")
+              src.resize((fg, fg), Image.LANCZOS).save(d + "/ic_launcher_foreground.png")
+          os.makedirs(res + "/values", exist_ok=True)
+          with open(res + "/values/ic_launcher_background.xml", "w") as f:
+              f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#%02X%02X%02X</color>\n</resources>\n' % bg)
+          print("App icon applied.")
+          PY
           fi
           echo "--- icon files in the Android project ---"
           ls -R android/app/src/main/res | grep -i "launcher\|mipmap\|ic_" || true
