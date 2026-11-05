@@ -80,6 +80,20 @@ class Link:
         self.warning = None
         self.last_ok = None
         self.next_retry = None
+        if hasattr(os, "register_at_fork"):
+            os.register_at_fork(after_in_child=self._after_fork)
+
+    def _after_fork(self):
+        """gunicorn may load the app in its master process and then fork the worker that answers requests. A fork copies
+        this object but NOT its background thread, so the worker would show whatever state the master had at that
+        moment (usually 'connecting') for ever, with nobody updating it. So the worker starts its own connection."""
+        was_started = self._started
+        self._lock = threading.Lock()          # a lock the master's thread held at fork time would stay locked for ever
+        self._kick = threading.Event()
+        self._started, self._mb, self._poll_fails = False, None, 0
+        self.state, self.kind, self.message, self.next_retry = "off", None, None, None
+        if was_started:
+            self.start()
 
     # -- what the rest of the program asks ---------------------------------
     @staticmethod

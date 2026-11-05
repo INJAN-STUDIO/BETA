@@ -62,7 +62,7 @@ app.config["MAX_CONTENT_LENGTH"] = max(32 * 1024 * 1024, video_store.MAX_BYTES +
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "4.1"
+APP_VERSION = "4.2"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -533,6 +533,11 @@ def _security_headers(resp):
 PUBLIC_API = {"/api/health", "/api/login", "/api/me", "/api/join"}
 OWNER_ONLY_PREFIXES = ("/api/term/", "/api/k10/", "/api/admin/", "/api/notify/ntfy", "/api/push/")   # tied to the owner's phone, desktop and settings
 TOKEN_API = {"/api/term/next", "/api/term/result"}      # the Termux script: checked against TERM_TOKEN inside each route
+
+
+@app.before_request
+def _start_k10_in_this_process():
+    k10_bridge.start_poller()          # safe on every request: does nothing after the first, or if K-10 isn't set up
 
 
 @app.before_request
@@ -1131,7 +1136,9 @@ def _notify_new_mail(m):
 
 
 k10_bridge.on_new = _notify_new_mail
-k10_bridge.start_poller()                                # does nothing unless K-10 is set up
+# K-10's background thread is started by _start_k10_in_this_process() (above the login check), not here: gunicorn may
+# import this file in its master process and then fork the worker that answers requests, and a fork does not carry
+# threads over - the worker would show "K-10 is connecting" for ever.
 
 
 # ---------------------------------------------------------------------------
