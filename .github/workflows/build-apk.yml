@@ -38,7 +38,13 @@ jobs:
           npx cap sync android
 
       - name: Apply the B.E.T.A. app icon
-        run: cp -r icons/res/. android/app/src/main/res/
+        run: |
+          if [ -d icons/res ]; then
+            cp -r icons/res/. android/app/src/main/res/
+            echo "App icon applied."
+          else
+            echo "No icons/res folder in the repo - building with the default icon."
+          fi
 
       - name: Build the APK
         working-directory: android
