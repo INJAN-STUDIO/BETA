@@ -62,7 +62,7 @@ app.config["MAX_CONTENT_LENGTH"] = max(32 * 1024 * 1024, video_store.MAX_BYTES +
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "4.4"
+APP_VERSION = "4.5"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -505,6 +505,7 @@ def _save_attachments(files):
 @app.after_request
 def _security_headers(resp):
     resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Beta"] = "1"          # lets the service worker tell B.E.T.A.'s own pages from Render's "waking up" page
     if request.path.startswith("/api/preview/") and resp.status_code == 200:
         # A preview is model-written HTML. It may be shown inside this site's own page ONLY, and it runs in a locked box:
         # its own scripts and styles work, but it has no network, no storage and no access to the page around it.
