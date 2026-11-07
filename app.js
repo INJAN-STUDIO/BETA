@@ -1783,14 +1783,13 @@ async function openHelp() {
   let c = {};
   try { c = await api('/api/capabilities'); } catch (e) { /* show the list without live status */ }
   const tag = (on) => on === undefined ? '' : (on ? '● on' : '○ not set up');
-  const friend = ME ? !ME.owner : c.owner === false;       // a friend's account has no phone, ALPHA or notification features
   const groups = [
     ['Talk and think', [
       ['Answers questions, explains things simply, and writes or fixes code', 'Try: "explain how DNS works like I\'m new"'],
-      ['Remembers: the last 60 messages, plus long-term memory for things worth keeping', friend ? null : 'Try: "remember that my laptop is a Dell E5440"'],
+      ['Remembers: the last 60 messages, plus long-term memory for things worth keeping', null],
       ['Reads aloud (Listen button) and copies a whole reply (Copy button)', null]]],
     ['Look things up', [
-      ['Searches the web, checks several sources and says when they disagree', friend ? 'Try: "what\'s the latest football news?"' : 'Try: "what\'s new in Fedora?"'],
+      ['Searches the web, checks several sources and says when they disagree', 'Try: "what\'s the latest football news?"'],
       ['Finds and shows photos', 'Try: "show me photos of Lagos at night"', c.images_search],
       ['Plays YouTube videos in the chat, or watches one and tells you what is in it', 'Try: "what does this video say? <link>"']]],
     ['Make things', [
@@ -1800,17 +1799,13 @@ async function openHelp() {
     ['Look at your stuff', [
       ['Reads pictures, text/code files and Word documents you attach (paperclip)', null],
       ['Watches a video from your phone (up to ' + (c.video_max_mb || 25) + ' MB; it uses mobile data to upload)', 'Try: attach a clip and ask "summarise this"']]],
-    ['Your phone and ALPHA', [
-      ['Runs commands in Termux, only after you tap Accept', 'Try: "how much storage is left?"', c.termux ? (c.termux_connected ? true : false) : false],
-      ['K-10 mail: private, encrypted messages to ALPHA that you read and approve', 'Try: "send ALPHA my notes"', c.k10]]],
     ['Control', [
       ['Choose the model by hand, including smarter ones for coding', null],
       ['Gemini traffic: a live check of whether Google\'s servers are busy', null],
-      ...(friend ? [] : [['Alerts when a reply is ready while you are away', null, c.alerts]]),
       ['Themes, text size, clear the chat, lock the app', null]]],
   ];
   body.textContent = '';
-  groups.filter(([title]) => !(friend && title === 'Your phone and ALPHA')).forEach(([title, items]) => {
+  groups.forEach(([title, items]) => {
     const h = document.createElement('div'); h.className = 'help-sec'; h.textContent = title; body.appendChild(h);
     items.forEach(([what, example, on]) => {
       const d = document.createElement('div'); d.className = 'help-it';
