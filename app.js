@@ -938,6 +938,13 @@ const nativePlugin = (name) => {
   return window.Capacitor.Plugins[name] || null;
 };
 
+const nativeInfo = () => {                                   // shown in error messages so a failure says what the app can see
+  if (!window.Capacitor) return 'no Capacitor bridge';
+  let names = [];
+  try { names = Object.keys(window.Capacitor.Plugins || {}); } catch (e) { /* ignore */ }
+  const has = (n) => (typeof window.Capacitor.isPluginAvailable === 'function' ? window.Capacitor.isPluginAvailable(n) : names.indexOf(n) >= 0);
+  return 'clipboard plugin: ' + (has('Clipboard') ? 'yes' : 'no') + ', voice plugin: ' + (has('SpeechRecognition') ? 'yes' : 'no');
+};
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog = null, listening = false;
 const nativeSpeech = nativePlugin('SpeechRecognition');
@@ -962,7 +969,7 @@ if (nativeSpeech) {
   });
 } else if (NATIVE) {
   $('mic-btn').classList.remove('hidden');
-  $('mic-btn').addEventListener('click', () => toast('Voice input is missing from this version of the app. Install the newest APK, or use the microphone on your keyboard.', true));
+  $('mic-btn').addEventListener('click', () => toast('Voice input is missing from this version of the app (' + nativeInfo() + '). Install the newest APK, or use the microphone on your keyboard.', true));
 } else if (Recognition) {
   $('mic-btn').classList.remove('hidden');
   $('mic-btn').addEventListener('click', () => {
@@ -1879,7 +1886,7 @@ document.addEventListener('paste', (e) => {
 $('paste-btn').addEventListener('click', async () => {
   const nativeClip = nativePlugin('Clipboard');
   if (NATIVE && !nativeClip) {
-    toast('Paste is missing from this version of the app. Install the newest APK, or long-press the message box and choose Paste.', true);
+    toast('Paste is missing from this version of the app (' + nativeInfo() + '). Install the newest APK, or long-press the message box and choose Paste.', true);
     $('input').focus(); return;
   }
   if (nativeClip) {                                           // the Android app: read the phone's clipboard directly
@@ -1892,8 +1899,8 @@ $('paste-btn').addEventListener('click', async () => {
         await addPastedImage(new File([blob], 'pasted', { type: blob.type || 'image/png' }));
       } else { await pasteText(v); }
       return;
-    } catch (e) { console.warn('clipboard plugin:', e); }
-    toast("Couldn't read the clipboard. Long-press the message box and choose Paste.", true);
+    } catch (e) { console.warn('clipboard plugin:', e); var clipErr = (e && e.message) || String(e); }
+    toast("Couldn't read the clipboard (" + clipErr + "). Long-press the message box and choose Paste.", true);
     $('input').focus(); return;
   }
   if (/firefox|fxios|fennec/i.test(navigator.userAgent) && !pasteHinted) { pasteHinted = true; toast('Firefox asks first: tap the small "Paste" bubble that appears.'); }
