@@ -62,7 +62,7 @@ app.config["MAX_CONTENT_LENGTH"] = max(32 * 1024 * 1024, video_store.MAX_BYTES +
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "4.7"
+APP_VERSION = "4.8"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -849,17 +849,52 @@ def full_image():
 # Read-aloud (Edge TTS, Brian) and generated images
 # ---------------------------------------------------------------------------
 
+def _saved_voice():
+    """This account's chosen read-aloud voice (Brian until they pick another)."""
+    try:
+        v = accounts.store_for(getattr(g, "uid", None)).get("voice_pref")
+    except Exception:
+        v = None
+    return v if tts_edge.valid_voice(v) else tts_edge.DEFAULT_VOICE
+
+
+@app.route("/api/voice", methods=["GET", "POST"])
+def voice_pref():
+    """GET: the voice list and this account's choice. POST {voice}: save the choice on the account, so it follows the
+    person to every phone they log in on."""
+    store = accounts.store_for(getattr(g, "uid", None))
+    if request.method == "POST":
+        v = str((request.get_json(silent=True) or {}).get("voice", ""))
+        if not tts_edge.valid_voice(v):
+            return jsonify(error="That voice isn't available."), 400
+        store.set("voice_pref", v)
+    return jsonify(voice=_saved_voice(), default=tts_edge.DEFAULT_VOICE, voices=tts_edge.VOICE_LIST)
+
+
 @app.route("/api/tts", methods=["POST"])
 def tts():
-    text = str((request.get_json(silent=True) or {}).get("text", ""))
+    body = request.get_json(silent=True) or {}
+    text = str(body.get("text", ""))
     if not text.strip():
         return jsonify(error="Nothing to read."), 400
     if len(text) > 20000:
         return jsonify(error="That message is too long to read aloud."), 400
+    wanted = body.get("voice")
+    if wanted:                                            # a sample: try a voice before choosing it
+        if not tts_edge.valid_voice(wanted):
+            return jsonify(error="That voice isn't available."), 400
+        voice = wanted
+    else:
+        voice = _saved_voice()
     try:
-        audio = tts_edge.synthesize(text)
+        audio = tts_edge.synthesize(text, voice)
     except tts_edge.TTSError as e:
-        return jsonify(error=str(e)), 502
+        if body.get("preview") or voice == tts_edge.DEFAULT_VOICE:
+            return jsonify(error=str(e)), 502
+        try:                                              # a chosen voice that fails never leaves someone without sound
+            audio = tts_edge.synthesize(text, tts_edge.DEFAULT_VOICE)
+        except tts_edge.TTSError as e2:
+            return jsonify(error=str(e2)), 502
     return Response(audio, mimetype="audio/mpeg", headers={"Cache-Control": "no-store"})
 
 

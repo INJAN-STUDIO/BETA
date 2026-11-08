@@ -19,6 +19,34 @@ from collections import OrderedDict
 from text_cleaner import clean_text_for_tts
 
 VOICE = os.environ.get("BETA_TTS_VOICE", "en-US-BrianNeural")
+DEFAULT_VOICE = VOICE                       # Brian, until a person picks another voice in the menu
+
+# The voices people can choose from (Microsoft Edge neural voices). Only ids on this list are ever sent to the speech service.
+VOICE_LIST = [
+    {"id": "en-US-BrianNeural",       "name": "Brian",       "gender": "male",   "accent": "American"},
+    {"id": "en-US-GuyNeural",         "name": "Guy",         "gender": "male",   "accent": "American"},
+    {"id": "en-US-AndrewNeural",      "name": "Andrew",      "gender": "male",   "accent": "American"},
+    {"id": "en-US-ChristopherNeural", "name": "Christopher", "gender": "male",   "accent": "American"},
+    {"id": "en-US-RogerNeural",       "name": "Roger",       "gender": "male",   "accent": "American"},
+    {"id": "en-GB-RyanNeural",        "name": "Ryan",        "gender": "male",   "accent": "British"},
+    {"id": "en-GB-ThomasNeural",      "name": "Thomas",      "gender": "male",   "accent": "British"},
+    {"id": "en-NG-AbeoNeural",        "name": "Abeo",        "gender": "male",   "accent": "Nigerian"},
+    {"id": "en-US-AriaNeural",        "name": "Aria",        "gender": "female", "accent": "American"},
+    {"id": "en-US-JennyNeural",       "name": "Jenny",       "gender": "female", "accent": "American"},
+    {"id": "en-US-AvaNeural",         "name": "Ava",         "gender": "female", "accent": "American"},
+    {"id": "en-US-EmmaNeural",        "name": "Emma",        "gender": "female", "accent": "American"},
+    {"id": "en-US-MichelleNeural",    "name": "Michelle",    "gender": "female", "accent": "American"},
+    {"id": "en-GB-SoniaNeural",       "name": "Sonia",       "gender": "female", "accent": "British"},
+    {"id": "en-GB-LibbyNeural",       "name": "Libby",       "gender": "female", "accent": "British"},
+    {"id": "en-NG-EzinneNeural",      "name": "Ezinne",      "gender": "female", "accent": "Nigerian"},
+]
+if not any(v["id"] == DEFAULT_VOICE for v in VOICE_LIST):          # a different default set through BETA_TTS_VOICE
+    VOICE_LIST.insert(0, {"id": DEFAULT_VOICE, "name": DEFAULT_VOICE.split("-")[-1].replace("Neural", ""),
+                          "gender": "male", "accent": "Default"})
+
+
+def valid_voice(voice):
+    return isinstance(voice, str) and any(v["id"] == voice for v in VOICE_LIST)
 MAX_CHARS = 2500
 CACHE_LIMIT = 24
 

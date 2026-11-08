@@ -922,10 +922,76 @@ async function speak(text, btn) {
   }
 }
 
+let voiceInfo = null;                       // {voice, default, voices:[{id,name,gender,accent}]} - the choice is saved on the account
+const voiceName = () => {
+  const v = voiceInfo && voiceInfo.voices.find((x) => x.id === voiceInfo.voice);
+  return v ? v.name : 'Brian';
+};
+async function loadVoice() {
+  try { voiceInfo = await api('/api/voice'); } catch (e) { /* keep showing Brian */ }
+  refreshVoiceMenu();
+}
 function refreshVoiceMenu() {
   setIcon($('m-voice-icon'), voiceOn ? 'speaker' : 'speaker-off');
-  $('m-voice-text').textContent = 'Read replies aloud (Brian): ' + (voiceOn ? 'on' : 'off');
+  $('m-voice-text').textContent = 'Read replies aloud: ' + (voiceOn ? 'on' : 'off');
+  $('m-voicepick-text').textContent = 'Voice: ' + voiceName();
 }
+
+// Plays a short sample of a voice (the server makes it, same as a real reply).
+async function previewVoice(v, btn) {
+  stopSpeaking();
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'beta' },
+      body: JSON.stringify({ text: "Hi, I'm " + v.name + '. This is how I sound when I read your replies aloud.', voice: v.id, preview: true }),
+    });
+    if (!res.ok) {
+      let msg = "That voice isn't available right now.";
+      try { msg = (await res.json()).error || msg; } catch (e) { /* not JSON */ }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    if (ttsUrl) URL.revokeObjectURL(ttsUrl);
+    ttsUrl = URL.createObjectURL(blob);
+    ttsAudio.onended = ttsAudio.onerror = null;
+    ttsAudio.src = ttsUrl;
+    await ttsAudio.play();
+  } catch (e) { toast(e.message || "Couldn't play the sample", true); }
+  btn.textContent = old; btn.disabled = false;
+}
+
+function openVoices() {
+  const body = $('voices-body'); body.textContent = '';
+  const cur = voiceInfo ? voiceInfo.voice : null;
+  const voices = voiceInfo ? voiceInfo.voices : [];
+  if (!voices.length) { body.textContent = "The voice list couldn't be loaded. Check your connection and try again."; show('voices'); return; }
+  [['male', 'Male voices'], ['female', 'Female voices']].forEach(([gender, title]) => {
+    body.appendChild(cardLabel(title));
+    voices.filter((v) => v.gender === gender).forEach((v) => {
+      const row = document.createElement('div'); row.className = 'sheet-item thm-row' + (v.id === cur ? ' on' : '');
+      row.style.cursor = 'pointer';
+      const n = document.createElement('span'); n.className = 'thm-name';
+      n.textContent = v.name + ' · ' + v.accent + (v.id === cur ? '  ✓' : '') + (v.id === voiceInfo.default ? '  (default)' : '');
+      row.appendChild(n);
+      const pv = document.createElement('button'); pv.className = 'listen-btn'; pv.textContent = 'Preview';
+      pv.addEventListener('click', (ev) => { ev.stopPropagation(); previewVoice(v, pv); });
+      row.appendChild(pv);
+      row.addEventListener('click', async () => {
+        try {
+          voiceInfo = await api('/api/voice', { method: 'POST', body: { voice: v.id } });
+          refreshVoiceMenu(); toast('Voice: ' + v.name); openVoices();
+        } catch (e) { toast(e.message || "Couldn't save the voice", true); }
+      });
+      body.appendChild(row);
+    });
+  });
+  show('voices');
+}
+$('m-voicepick').addEventListener('click', () => { hide('menu'); openVoices(); });
+$('voices-close').addEventListener('click', () => { stopSpeaking(); hide('voices'); });
 
 // Inside the Android app (Capacitor) the phone's own clipboard and speech-recognition services are used, because the
 // browser versions of both are blocked in an Android WebView. In a normal browser nothing here changes.
@@ -2242,6 +2308,7 @@ function applyAccount(user) {
   ['m-key', 'm-export', 'm-delete'].forEach((id) => $(id).classList.toggle('hidden', !friend));
   $('m-key-text').textContent = ME.own_key ? 'My own key: on (' + (ME.own_key_mask || 'saved') + ')' : 'Use my own free key';
   if (friend) { $('m-termux').classList.add('hidden'); $('m-k10').classList.add('hidden'); $('m-notify').classList.add('hidden'); }   // tied to the owner's phone, desktop and server keys
+  loadVoice();                                            // this account's saved read-aloud voice
 }
 
 // ---- joining with an invite code: a wrong field is cleared and flagged, the right ones stay filled in ----
