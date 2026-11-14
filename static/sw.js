@@ -38,7 +38,14 @@ self.addEventListener('fetch', function (e) {
       var timer = setTimeout(fallback, 3000);
       fetch(req).then(function (res) {
         clearTimeout(timer);
-        if (res && res.ok) { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put('/', copy); }); }
+        // Render answers at once with its own "waking up" page while the free server is asleep. Real B.E.T.A. pages carry
+        // an X-Beta header; anything without it is NOT B.E.T.A., so show the saved copy (B.E.T.A.'s own loading screen) instead.
+        var mine = !!(res && res.headers && res.headers.get('X-Beta'));
+        if (res && res.ok && mine) { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put('/', copy); }); }
+        if (!mine) {
+          caches.match('/').then(function (hit) { if (!settled) { settled = true; resolve(hit || res); } });
+          return;
+        }
         if (!settled) { settled = true; resolve(res); }
       }).catch(function () {
         clearTimeout(timer);

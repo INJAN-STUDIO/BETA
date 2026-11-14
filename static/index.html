@@ -107,6 +107,7 @@
     <button class="sheet-item" id="m-memory"><span data-icon="bookmark"></span>Long-term memory</button>
     <button class="sheet-item" id="m-help"><span data-icon="help"></span>What can B.E.T.A. do?</button>
     <button class="sheet-item" id="m-voice"><span id="m-voice-icon" data-icon="speaker"></span><span id="m-voice-text">Read replies aloud (Brian): off</span></button>
+    <button class="sheet-item" id="m-voicepick"><span data-icon="speaker"></span><span id="m-voicepick-text">Voice: Brian</span></button>
     <button class="sheet-item" id="m-notify"><span id="m-notify-icon" data-icon="bell-off"></span><span id="m-notify-text">Notify me when a reply is ready: off</span></button>
     <button class="sheet-item hidden" id="m-termux"><span data-icon="terminal"></span><span id="m-termux-text">Termux: checking…</span></button>
     <button class="sheet-item" id="m-model-pick"><span data-icon="cpu"></span><span id="m-model-text">Model: Auto</span></button>
@@ -114,7 +115,6 @@
     <button class="sheet-item hidden" id="m-k10"><span data-icon="mail"></span><span id="m-k10-text">K-10 mail</span></button>
     <button class="sheet-item" id="m-theme"><span id="m-theme-icon" data-icon="palette"></span><span id="m-theme-text">Theme: Logo colours · Dark</span></button>
     <button class="sheet-item" id="m-size"><span data-icon="text"></span><span id="m-size-text">Text size: Medium</span></button>
-    <button class="sheet-item" id="m-install"><span data-icon="download"></span><span>Install as an app</span></button>
     <button class="sheet-item hidden" id="m-friends"><span data-icon="users"></span>Friends and invites</button>
     <button class="sheet-item hidden" id="m-key"><span data-icon="key"></span><span id="m-key-text">Use my own free key</span></button>
     <button class="sheet-item hidden" id="m-export"><span data-icon="download"></span>Export my data</button>
@@ -143,6 +143,15 @@
     <div class="sheet-title">Theme</div>
     <div id="themes-body" class="sheet-scroll"></div>
     <button class="sheet-close" id="themes-close">Close</button>
+  </div>
+</div>
+
+<!-- Pick the read-aloud voice -->
+<div id="voices" class="overlay hidden">
+  <div class="sheet tall">
+    <div class="sheet-title">Voice</div>
+    <div id="voices-body" class="sheet-scroll"></div>
+    <button class="sheet-close" id="voices-close">Close</button>
   </div>
 </div>
 
@@ -230,15 +239,6 @@
     <div class="sheet-title">Use my own free key</div>
     <div id="ownkey-body" class="sheet-scroll"></div>
     <button class="sheet-close" id="ownkey-close">Close</button>
-  </div>
-</div>
-
-<!-- Install help (Firefox/Fennec have no install pop-up, so this says exactly what to tap) -->
-<div id="install" class="overlay hidden">
-  <div class="sheet">
-    <div class="sheet-title">Install B.E.T.A.</div>
-    <div id="install-body" class="sheet-text"></div>
-    <button class="sheet-close" id="install-close">Close</button>
   </div>
 </div>
 

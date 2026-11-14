@@ -922,14 +922,121 @@ async function speak(text, btn) {
   }
 }
 
+let voiceInfo = null;                       // {voice, default, voices:[{id,name,gender,accent}]} - the choice is saved on the account
+const voiceName = () => {
+  const v = voiceInfo && voiceInfo.voices.find((x) => x.id === voiceInfo.voice);
+  return v ? v.name : 'Brian';
+};
+async function loadVoice() {
+  try { voiceInfo = await api('/api/voice'); } catch (e) { /* keep showing Brian */ }
+  refreshVoiceMenu();
+}
 function refreshVoiceMenu() {
   setIcon($('m-voice-icon'), voiceOn ? 'speaker' : 'speaker-off');
-  $('m-voice-text').textContent = 'Read replies aloud (Brian): ' + (voiceOn ? 'on' : 'off');
+  $('m-voice-text').textContent = 'Read replies aloud: ' + (voiceOn ? 'on' : 'off');
+  $('m-voicepick-text').textContent = 'Voice: ' + voiceName();
 }
 
+// Plays a short sample of a voice (the server makes it, same as a real reply).
+async function previewVoice(v, btn) {
+  stopSpeaking();
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'beta' },
+      body: JSON.stringify({ text: "Hi, I'm " + v.name + '. This is how I sound when I read your replies aloud.', voice: v.id, preview: true }),
+    });
+    if (!res.ok) {
+      let msg = "That voice isn't available right now.";
+      try { msg = (await res.json()).error || msg; } catch (e) { /* not JSON */ }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    if (ttsUrl) URL.revokeObjectURL(ttsUrl);
+    ttsUrl = URL.createObjectURL(blob);
+    ttsAudio.onended = ttsAudio.onerror = null;
+    ttsAudio.src = ttsUrl;
+    await ttsAudio.play();
+  } catch (e) { toast(e.message || "Couldn't play the sample", true); }
+  btn.textContent = old; btn.disabled = false;
+}
+
+function openVoices() {
+  const body = $('voices-body'); body.textContent = '';
+  const cur = voiceInfo ? voiceInfo.voice : null;
+  const voices = voiceInfo ? voiceInfo.voices : [];
+  if (!voices.length) { body.textContent = "The voice list couldn't be loaded. Check your connection and try again."; show('voices'); return; }
+  [['male', 'Male voices'], ['female', 'Female voices']].forEach(([gender, title]) => {
+    body.appendChild(cardLabel(title));
+    voices.filter((v) => v.gender === gender).forEach((v) => {
+      const row = document.createElement('div'); row.className = 'sheet-item thm-row' + (v.id === cur ? ' on' : '');
+      row.style.cursor = 'pointer';
+      const n = document.createElement('span'); n.className = 'thm-name';
+      n.textContent = v.name + ' · ' + v.accent + (v.id === cur ? '  ✓' : '') + (v.id === voiceInfo.default ? '  (default)' : '');
+      row.appendChild(n);
+      const pv = document.createElement('button'); pv.className = 'listen-btn'; pv.textContent = 'Preview';
+      pv.addEventListener('click', (ev) => { ev.stopPropagation(); previewVoice(v, pv); });
+      row.appendChild(pv);
+      row.addEventListener('click', async () => {
+        try {
+          voiceInfo = await api('/api/voice', { method: 'POST', body: { voice: v.id } });
+          refreshVoiceMenu(); toast('Voice: ' + v.name); openVoices();
+        } catch (e) { toast(e.message || "Couldn't save the voice", true); }
+      });
+      body.appendChild(row);
+    });
+  });
+  show('voices');
+}
+$('m-voicepick').addEventListener('click', () => { hide('menu'); openVoices(); });
+$('voices-close').addEventListener('click', () => { stopSpeaking(); hide('voices'); });
+
+// Inside the Android app (Capacitor) the phone's own clipboard and speech-recognition services are used, because the
+// browser versions of both are blocked in an Android WebView. In a normal browser nothing here changes.
+const NATIVE = !!(window.Capacitor && (
+  (typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()) ||
+  (typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() !== 'web')));
+const nativePlugin = (name) => {
+  if (!NATIVE || !window.Capacitor.Plugins) return null;
+  if (typeof window.Capacitor.isPluginAvailable === 'function' && !window.Capacitor.isPluginAvailable(name)) return null;
+  return window.Capacitor.Plugins[name] || null;
+};
+
+const nativeInfo = () => {                                   // shown in error messages so a failure says what the app can see
+  if (!window.Capacitor) return 'no Capacitor bridge';
+  let names = [];
+  try { names = Object.keys(window.Capacitor.Plugins || {}); } catch (e) { /* ignore */ }
+  const has = (n) => (typeof window.Capacitor.isPluginAvailable === 'function' ? window.Capacitor.isPluginAvailable(n) : names.indexOf(n) >= 0);
+  return 'clipboard plugin: ' + (has('Clipboard') ? 'yes' : 'no') + ', voice plugin: ' + (has('SpeechRecognition') ? 'yes' : 'no');
+};
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog = null, listening = false;
-if (Recognition) {
+const nativeSpeech = nativePlugin('SpeechRecognition');
+if (nativeSpeech) {
+  $('mic-btn').classList.remove('hidden');
+  $('mic-btn').addEventListener('click', async () => {
+    if (listening) { try { await nativeSpeech.stop(); } catch (e) { /* already stopped */ } return; }
+    try {
+      const av = await nativeSpeech.available();
+      if (!av || !av.available) { toast("Voice input isn't available on this phone. Use the microphone on your keyboard instead.", true); return; }
+      let perm = await nativeSpeech.checkPermissions();
+      if (!perm || perm.speechRecognition !== 'granted') perm = await nativeSpeech.requestPermissions();
+      if (!perm || perm.speechRecognition !== 'granted') { toast('Microphone permission was not given. You can allow it in the phone settings for B.E.T.A.', true); return; }
+      listening = true; $('mic-btn').classList.add('active');
+      const r = await nativeSpeech.start({ language: navigator.language || 'en-US', maxResults: 1, partialResults: false, popup: false });
+      const text = r && r.matches && r.matches[0];
+      if (text) { $('input').value = text; autosize(); send(); }
+      else toast("Didn't catch that. Tap the microphone and try again.");
+    } catch (e) {
+      toast("Voice input didn't work: " + ((e && e.message) || 'unknown problem') + '. You can use the microphone on your keyboard instead.', true);
+    } finally { listening = false; $('mic-btn').classList.remove('active'); }
+  });
+} else if (NATIVE) {
+  $('mic-btn').classList.remove('hidden');
+  $('mic-btn').addEventListener('click', () => toast('Voice input is missing from this version of the app (' + nativeInfo() + '). Install the newest APK, or use the microphone on your keyboard.', true));
+} else if (Recognition) {
   $('mic-btn').classList.remove('hidden');
   $('mic-btn').addEventListener('click', () => {
     if (listening) { recog.stop(); return; }
@@ -1286,63 +1393,6 @@ $('m-theme').addEventListener('click', () => { hide('menu'); openThemes(); });
 $('themes-close').addEventListener('click', () => hide('themes'));
 applyTheme();
 
-// ---- install as an app ----
-// Chrome-type browsers fire "beforeinstallprompt" and we can open their install dialog. Firefox and
-// Fennec never do, so there the sheet just says exactly what to tap - and checks the things that
-// make Firefox hide the Install item (no service worker, private tab, not https).
-let installEvent = null;
-const isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; });
-window.addEventListener('appinstalled', () => { installEvent = null; toast('B.E.T.A. installed'); $('m-install').classList.add('hidden'); });
-if (isStandalone()) $('m-install').classList.add('hidden');
-
-function step(n, text) {
-  const row = document.createElement('div'); row.className = 'step';
-  const num = document.createElement('span'); num.className = 'num'; num.textContent = n;
-  const t = document.createElement('span'); t.textContent = text;
-  row.appendChild(num); row.appendChild(t);
-  return row;
-}
-async function showInstallHelp() {
-  const body = $('install-body');
-  body.innerHTML = '';
-  const firefox = /Firefox|Fennec/i.test(navigator.userAgent);
-  const p = document.createElement('p');
-  p.textContent = firefox ? 'In Fennec / Firefox:' : 'In your browser:';
-  body.appendChild(p);
-  body.appendChild(step(1, 'Tap the \u22EE menu (top right of the browser).'));
-  body.appendChild(step(2, firefox ? "Tap Install. (It appears in place of \"Add to Home screen\" when the app qualifies.)" : 'Tap Install app, or Add to Home screen.'));
-  body.appendChild(step(3, 'Confirm. B.E.T.A. gets its own icon and opens full-screen.'));
-  let reg = null;
-  try { reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null; } catch (e) { /* blocked */ }
-  const lines = [];
-  const missing = [];
-  if (!window.visualViewport) missing.push('keyboard fitting');
-  if (!navigator.clipboard) missing.push('clipboard (fallback used)');
-  if (!window.speechSynthesis) missing.push('read-aloud');
-  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) missing.push('voice input');
-  if (!window.createImageBitmap) missing.push('fast photo shrinking (fallback used)');
-  lines.push(missing.length ? 'Not available in this browser: ' + missing.join(', ') : 'Browser features: everything B.E.T.A. uses is available');
-  lines.push(window.isSecureContext ? 'Secure connection (https): yes' : 'Secure connection (https): NO - installing needs https');
-  lines.push('serviceWorker' in navigator ? 'Offline helper: ' + (reg ? 'ready' : 'not registered yet - reload once, wait a few seconds, then try the menu again') : 'Offline helper: BLOCKED by this browser (a Private tab or strict privacy setting) - Install will not appear until it is allowed');
-  lines.push('Currently installed: ' + (isStandalone() ? 'yes' : 'no'));
-  const status = document.createElement('div'); status.className = 'status'; status.textContent = lines.join('\n'); status.style.whiteSpace = 'pre-line';
-  body.appendChild(status);
-  show('install');
-}
-$('m-install').addEventListener('click', async () => {
-  hide('menu');
-  if (installEvent) {                       // Chrome-type browsers: open the real install dialog
-    installEvent.prompt();
-    try { await installEvent.userChoice; } catch (e) { /* dismissed */ }
-    installEvent = null;
-    return;
-  }
-  showInstallHelp();
-});
-$('install-close').addEventListener('click', () => hide('install'));
-$('install').addEventListener('click', (e) => { if (e.target === $('install')) hide('install'); });
-
 $('m-voice').addEventListener('click', () => {
   voiceOn = !voiceOn; store.set('beta_voice', voiceOn ? '1' : '0');
   if (!voiceOn) stopSpeaking();
@@ -1673,11 +1723,25 @@ function renderTraffic(d) {
   const link = document.createElement('a'); link.textContent = "Google's own status page"; link.href = d.official_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
   foot.appendChild(link); foot.appendChild(document.createTextNode(' (it often lags behind real overloads).')); body.appendChild(foot);
 }
+let trafficBusy = false;
 async function runTraffic(force) {
-  const btn = $('traffic-refresh'); btn.disabled = true;
-  try { renderTraffic(await api('/api/gemini/status' + (force ? '?force=1' : ''))); $('traffic-note').textContent = ''; }
-  catch (e) { $('traffic-body').textContent = e.message || "Couldn't check the servers."; }
-  btn.disabled = false;
+  if (trafficBusy) { if (force) toast('Still checking - one moment…'); return; }
+  trafficBusy = true;
+  const btn = $('traffic-refresh'), body = $('traffic-body'), note = $('traffic-note');
+  btn.disabled = true; btn.classList.add('busy'); btn.textContent = 'Checking…';
+  body.classList.add('checking');
+  if (force) note.textContent = 'Asking every model again - this can take up to 25 seconds.';
+  try {
+    renderTraffic(await api('/api/gemini/status' + (force ? '?force=1' : '')));
+    note.textContent = force ? 'Updated just now ✓' : '';
+    if (force) setTimeout(() => { if (note.textContent === 'Updated just now ✓') note.textContent = ''; }, 3000);
+  } catch (e) {
+    const msg = e.message || "Couldn't check the servers.";
+    if (!body.querySelector('.tr-banner')) body.textContent = msg;                 // nothing to show yet: say what went wrong
+    note.textContent = body.querySelector('.tr-banner') ? msg + ' Tap Refresh now to try again.' : '';
+  }
+  body.classList.remove('checking'); btn.classList.remove('busy'); btn.textContent = 'Refresh now'; btn.disabled = false;
+  trafficBusy = false;
 }
 function closeTraffic() { if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; } hide('traffic'); }
 $('m-traffic').addEventListener('click', () => {
@@ -1795,10 +1859,10 @@ async function openHelp() {
   const groups = [
     ['Talk and think', [
       ['Answers questions, explains things simply, and writes or fixes code', 'Try: "explain how DNS works like I\'m new"'],
-      ['Remembers: the last 60 messages, plus long-term memory for things worth keeping', 'Try: "remember that my laptop is a Dell E5440"'],
+      ['Remembers: the last 60 messages, plus long-term memory for things worth keeping', null],
       ['Reads aloud (Listen button) and copies a whole reply (Copy button)', null]]],
     ['Look things up', [
-      ['Searches the web, checks several sources and says when they disagree', 'Try: "what\'s new in Fedora?"'],
+      ['Searches the web, checks several sources and says when they disagree', 'Try: "what\'s the latest football news?"'],
       ['Finds and shows photos', 'Try: "show me photos of Lagos at night"', c.images_search],
       ['Plays YouTube videos in the chat, or watches one and tells you what is in it', 'Try: "what does this video say? <link>"']]],
     ['Make things', [
@@ -1808,14 +1872,10 @@ async function openHelp() {
     ['Look at your stuff', [
       ['Reads pictures, text/code files and Word documents you attach (paperclip)', null],
       ['Watches a video from your phone (up to ' + (c.video_max_mb || 25) + ' MB; it uses mobile data to upload)', 'Try: attach a clip and ask "summarise this"']]],
-    ['Your phone and ALPHA', [
-      ['Runs commands in Termux, only after you tap Accept', 'Try: "how much storage is left?"', c.termux ? (c.termux_connected ? true : false) : false],
-      ['K-10 mail: private, encrypted messages to ALPHA that you read and approve', 'Try: "send ALPHA my notes"', c.k10]]],
     ['Control', [
       ['Choose the model by hand, including smarter ones for coding', null],
       ['Gemini traffic: a live check of whether Google\'s servers are busy', null],
-      ['Alerts when a reply is ready while you are away', null, c.alerts],
-      ['Themes, text size, install as an app, clear the chat, lock the app', null]]],
+      ['Themes, text size, clear the chat, lock the app', null]]],
   ];
   body.textContent = '';
   groups.forEach(([title, items]) => {
@@ -1890,6 +1950,25 @@ document.addEventListener('paste', (e) => {
 // Firefox always shows its own small "Paste" bubble before a page may read the clipboard - that is Firefox's privacy rule
 // and a page cannot skip it (Chrome lets you allow clipboard access once).
 $('paste-btn').addEventListener('click', async () => {
+  const nativeClip = nativePlugin('Clipboard');
+  if (NATIVE && !nativeClip) {
+    toast('Paste is missing from this version of the app (' + nativeInfo() + '). Install the newest APK, or long-press the message box and choose Paste.', true);
+    $('input').focus(); return;
+  }
+  if (nativeClip) {                                           // the Android app: read the phone's clipboard directly
+    try {
+      const r = await nativeClip.read();
+      const v = r && r.value;
+      if (!v) { toast('The clipboard is empty'); return; }
+      if (/^data:image\//.test(v) || /^image\//.test(r.type || '')) {
+        const blob = await (await fetch(/^data:/.test(v) ? v : 'data:' + r.type + ';base64,' + v)).blob();
+        await addPastedImage(new File([blob], 'pasted', { type: blob.type || 'image/png' }));
+      } else { await pasteText(v); }
+      return;
+    } catch (e) { console.warn('clipboard plugin:', e); var clipErr = (e && e.message) || String(e); }
+    toast("Couldn't read the clipboard (" + clipErr + "). Long-press the message box and choose Paste.", true);
+    $('input').focus(); return;
+  }
   if (/firefox|fxios|fennec/i.test(navigator.userAgent) && !pasteHinted) { pasteHinted = true; toast('Firefox asks first: tap the small "Paste" bubble that appears.'); }
   const clip = navigator.clipboard;
   let denied = false;
@@ -1954,6 +2033,7 @@ async function getPushSub() {
 let notifyMode = 'webpush';          // 'ntfy' when the server is set up to send through the ntfy app
 let ntfyOn = false;
 async function refreshNotifyMenu() {
+  if (ME && !ME.owner) { $('m-notify').classList.add('hidden'); return; }          // friends have no notification keys
   let info = null;
   try { info = await api('/api/notify/info'); } catch (e) { /* offline: fall back to browser push */ }
   if (info && info.ntfy) {
@@ -1990,6 +2070,7 @@ async function disablePush(sub) {
 }
 // Opened the app with notifications already on: make sure the server still has this phone saved.
 async function syncPushSub() {
+  if (ME && !ME.owner) return;
   if (!pushSupported || Notification.permission !== 'granted') return;
   const sub = await getPushSub();
   if (sub) api('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } }).catch(() => {});
@@ -2226,7 +2307,8 @@ function applyAccount(user) {
   $('m-friends').classList.toggle('hidden', friend);
   ['m-key', 'm-export', 'm-delete'].forEach((id) => $(id).classList.toggle('hidden', !friend));
   $('m-key-text').textContent = ME.own_key ? 'My own key: on (' + (ME.own_key_mask || 'saved') + ')' : 'Use my own free key';
-  if (friend) { $('m-termux').classList.add('hidden'); $('m-k10').classList.add('hidden'); }   // tied to the owner's phone and desktop
+  if (friend) { $('m-termux').classList.add('hidden'); $('m-k10').classList.add('hidden'); $('m-notify').classList.add('hidden'); }   // tied to the owner's phone, desktop and server keys
+  loadVoice();                                            // this account's saved read-aloud voice
 }
 
 // ---- joining with an invite code: a wrong field is cleared and flagged, the right ones stay filled in ----
