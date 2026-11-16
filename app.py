@@ -39,6 +39,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import image_gen
 import file_store
 import gemini_status
+import system_report
 import image_search
 import k10_bridge
 import k10_core
@@ -62,7 +63,7 @@ app.config["MAX_CONTENT_LENGTH"] = max(32 * 1024 * 1024, video_store.MAX_BYTES +
 # big new feature, and ALWAYS change it when you push, even for a one-line fix (phones keep a saved copy of the app
 # for each number, so an unchanged number can leave a phone showing the old files). The page, the service worker and
 # the menu all pick it up from here, and a phone showing an older number refreshes itself.
-APP_VERSION = "4.8"
+APP_VERSION = "4.9"
 
 SESSION_COOKIE = "beta_session"
 SESSION_DAYS = 30
@@ -1032,6 +1033,54 @@ def gemini_traffic():
         pass
     data = gemini_status.check(key, models, on_success=lambda m: ac.USAGE.record(m), force=request.args.get("force") == "1")
     return jsonify(data)
+
+
+# ---------------------------------------------------------------------------
+# System report: one small test per thing B.E.T.A. needs (see system_report.py). The page asks for the plan, then runs
+# each check on its own so every row can show its result the moment it arrives.
+# ---------------------------------------------------------------------------
+
+def _gemini_model_list():
+    try:
+        get_agent()                                       # makes sure the model list is configured
+    except Exception:
+        pass
+    import agent_core as ac
+    models = [ac.MODEL] + list(ac.FALLBACK_MODELS)
+    try:
+        models += [m for m in get_agent().extra_models if m not in models]
+    except Exception:
+        pass
+    return models, ac
+
+
+def _system_plan():
+    models, _ = _gemini_model_list()
+    return system_report.plan(_uid() == accounts.OWNER_ID, models)
+
+
+@app.route("/api/system/plan")
+def system_plan():
+    full = request.args.get("full") == "1"
+    rows = [r for r in _system_plan() if full or not r["full"]]
+    return jsonify(checks=rows, full=full, version=APP_VERSION, commit=(os.environ.get("RENDER_GIT_COMMIT", "") or "")[:7])
+
+
+@app.route("/api/system/run")
+def system_run():
+    cid = request.args.get("id", "")
+    allowed = {r["id"] for r in _system_plan()}
+    _, ac = _gemini_model_list()
+    ctx = {
+        "version": APP_VERSION, "storage": storage, "tts_edge": tts_edge, "k10_bridge": k10_bridge, "term_bridge": term_bridge,
+        "last_alert": dict(LAST_ALERT), "voice": _saved_voice(),
+        "ntfy_on": _ntfy_on() if _ntfy_ready() else True,
+        "on_model_ok": lambda m: ac.USAGE.record(m),      # a test uses a little of that model's allowance, so the meter counts it
+    }
+    res = system_report.run(cid, ctx, _uid(), allowed)
+    if res is None:
+        return jsonify(error="Unknown check."), 404
+    return jsonify(res)
 
 
 # ---------------------------------------------------------------------------

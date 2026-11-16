@@ -44,6 +44,7 @@ const ICONS = {
   clipboard: '<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>',
   help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3M12 17h.01"/>',
   video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
+  camera: '<path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/>',
   lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>',
   unlock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 019.9-1"/>',
   mail: '<path d="M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z"/><polyline points="22,6 12,13 2,6"/>',
@@ -355,12 +356,25 @@ function buildTable(seg) {
   const thead = document.createElement('thead'), hr = document.createElement('tr');
   seg.header.forEach((t, k) => { const th = document.createElement('th'); th.style.textAlign = seg.align[k]; appendInline(th, t); hr.appendChild(th); });
   thead.appendChild(hr); table.appendChild(thead);
+  // Four or more columns cannot share a phone screen without words being chopped in half, so each row becomes a small
+  // card (label: value lines) instead. Tables with up to three columns stay tables. The card's title is the first
+  // column - unless that is just a row number / ID, then it is the second.
+  const asCards = cols >= 4;
+  const labels = Array.from(hr.children).map((th) => th.textContent.replace(/\s+/g, ' ').trim());
+  const idLike = /^(id|#|no\.?|s\/?n|sn|num(ber)?|index)$/i.test(labels[0] || '');
+  const numbered = seg.rows.length > 0 && seg.rows.every((r) => /^\s*\d+[.)]?\s*$/.test(r[0] || ''));
+  const titleIdx = asCards && cols > 1 && (idLike || numbered) ? 1 : 0;
   const tbody = document.createElement('tbody');
   seg.rows.forEach((row) => {
     const tr = document.createElement('tr');
-    for (let k = 0; k < cols; k++) { const td = document.createElement('td'); td.style.textAlign = seg.align[k]; appendInline(td, row[k] || ''); tr.appendChild(td); }
+    for (let k = 0; k < cols; k++) {
+      const td = document.createElement('td'); td.style.textAlign = seg.align[k]; appendInline(td, row[k] || '');
+      if (asCards) { td.setAttribute('data-label', labels[k] || ''); if (k === titleIdx) td.className = 'card-title'; }
+      tr.appendChild(td);
+    }
     tbody.appendChild(tr);
   });
+  if (asCards) table.className = 'tbl-cards';
   table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
   return wrap;
 }
@@ -1175,8 +1189,8 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 
-$('attach-btn').addEventListener('click', () => $('file-input').click());
-$('file-input').addEventListener('change', async (e) => {
+const IS_TOUCH = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+async function takePickedFiles(e) {
   for (const file of Array.from(e.target.files)) {
     if (isVideoFile(file)) { await uploadVideo(file); continue; }
     if (attachments.length >= 4) { toast('Up to 4 files at a time', true); break; }
@@ -1188,7 +1202,15 @@ $('file-input').addEventListener('change', async (e) => {
   }
   e.target.value = '';
   renderChips();
-});
+}
+// On a phone the paperclip offers camera, video and files (the Android app's own file picker doesn't offer the camera by
+// itself, so these buttons ask for it directly). On a computer there is no camera shortcut, so it opens the file picker.
+$('attach-btn').addEventListener('click', () => { if (IS_TOUCH) show('attach-sheet'); else $('file-input').click(); });
+$('at-photo').addEventListener('click', () => { hide('attach-sheet'); $('cam-photo').click(); });
+$('at-video').addEventListener('click', () => { hide('attach-sheet'); $('cam-video').click(); });
+$('at-file').addEventListener('click', () => { hide('attach-sheet'); $('file-input').click(); });
+$('attach-close').addEventListener('click', () => hide('attach-sheet'));
+['file-input', 'cam-photo', 'cam-video'].forEach((id) => $(id).addEventListener('change', takePickedFiles));
 
 function setBusy(on) {
   busy = on;
@@ -1340,19 +1362,19 @@ applyTextSize();
 // ---- theme: logo colours (dark / light) or classic (ALPHA's original dark / light) ----
 let ME = null;          // the account that is logged in (see applyAccount)
 const THEMES = [
-  { id: 'icon-dark', name: 'Logo colours · Dark', bar: '#051a22', icon: 'palette', kind: 'dark', sw: ["#051a22", "#35b6d5", "#7fe3ee"] },
-  { id: 'icon-light', name: 'Logo colours · Light', bar: '#e8f5f8', icon: 'palette', kind: 'light', sw: ["#e8f5f8", "#0e6e9e", "#0b6a96"] },
-  { id: 'dark', name: 'Classic dark (ALPHA)', bar: '#05060a', icon: 'moon', kind: 'dark', sw: ["#05060a", "#2ab0ff", "#6fd2ff"] },
-  { id: 'light', name: 'Classic light', bar: '#f2f6fb', icon: 'sun', kind: 'light', sw: ["#f2f6fb", "#1469c8", "#0a66bd"] },
-  { id: 'midnight', name: 'Midnight purple · Dark', bar: '#0b0720', icon: 'palette', kind: 'dark', sw: ["#0b0720", "#8b5cf6", "#c4b5fd"] },
-  { id: 'forest', name: 'Forest green · Dark', bar: '#04140d', icon: 'palette', kind: 'dark', sw: ["#04140d", "#2fbf71", "#86efac"] },
-  { id: 'sunset', name: 'Sunset amber · Dark', bar: '#190c05', icon: 'palette', kind: 'dark', sw: ["#190c05", "#ff8a3d", "#ffc27a"] },
-  { id: 'rose', name: 'Rose · Dark', bar: '#1a0711', icon: 'palette', kind: 'dark', sw: ["#1a0711", "#ec4899", "#f9a8d4"] },
-  { id: 'ocean', name: 'Ocean blue · Dark', bar: '#04122b', icon: 'palette', kind: 'dark', sw: ["#04122b", "#3b82f6", "#93c5fd"] },
-  { id: 'amoled', name: 'True black · AMOLED', bar: '#000000', icon: 'palette', kind: 'dark', sw: ["#000000", "#4dd0e1", "#a5f3fc"] },
-  { id: 'paper', name: 'Paper · Warm light', bar: '#f6f1e7', icon: 'palette', kind: 'light', sw: ["#f6f1e7", "#b45309", "#92400e"] },
-  { id: 'mint', name: 'Mint · Light', bar: '#e9f7ef', icon: 'palette', kind: 'light', sw: ["#e9f7ef", "#0f8f55", "#0b7344"] },
-  { id: 'lavender', name: 'Lavender · Light', bar: '#f1ecfb', icon: 'palette', kind: 'light', sw: ["#f1ecfb", "#7c3aed", "#6d28d9"] },
+  { id: 'icon-dark', name: 'Logo colours · Dark', bar: '#001016', icon: 'palette', kind: 'dark', sw: ["#001016", "#35b6d5", "#7fe3ee"] },
+  { id: 'icon-light', name: 'Logo colours · Light', bar: '#daf0ff', icon: 'palette', kind: 'light', sw: ["#daf0ff", "#0e6e9e", "#0b6a96"] },
+  { id: 'dark', name: 'Classic dark (ALPHA)', bar: '#000e21', icon: 'moon', kind: 'dark', sw: ["#000e21", "#2ab0ff", "#6fd2ff"] },
+  { id: 'light', name: 'Classic light', bar: '#e1edfe', icon: 'sun', kind: 'light', sw: ["#e1edfe", "#1469c8", "#0a66bd"] },
+  { id: 'midnight', name: 'Midnight purple · Dark', bar: '#11002f', icon: 'palette', kind: 'dark', sw: ["#11002f", "#8b5cf6", "#c4b5fd"] },
+  { id: 'forest', name: 'Forest green · Dark', bar: '#001205', icon: 'palette', kind: 'dark', sw: ["#001205", "#2fbf71", "#86efac"] },
+  { id: 'sunset', name: 'Sunset amber · Dark', bar: '#1d0600', icon: 'palette', kind: 'dark', sw: ["#1d0600", "#ff8a3d", "#ffc27a"] },
+  { id: 'rose', name: 'Rose · Dark', bar: '#22000f', icon: 'palette', kind: 'dark', sw: ["#22000f", "#ec4899", "#f9a8d4"] },
+  { id: 'ocean', name: 'Ocean blue · Dark', bar: '#00092e', icon: 'palette', kind: 'dark', sw: ["#00092e", "#3b82f6", "#93c5fd"] },
+  { id: 'amoled', name: 'True black · AMOLED', bar: '#000101', icon: 'palette', kind: 'dark', sw: ["#000101", "#4dd0e1", "#a5f3fc"] },
+  { id: 'paper', name: 'Paper · Warm light', bar: '#fee7db', icon: 'palette', kind: 'light', sw: ["#fee7db", "#b45309", "#92400e"] },
+  { id: 'mint', name: 'Mint · Light', bar: '#d5f6e0', icon: 'palette', kind: 'light', sw: ["#d5f6e0", "#0f8f55", "#0b7344"] },
+  { id: 'lavender', name: 'Lavender · Light', bar: '#ece9ff', icon: 'palette', kind: 'light', sw: ["#ece9ff", "#7c3aed", "#6d28d9"] },
 ];
 let themeIdx = Math.max(0, THEMES.findIndex((t) => t.id === store.get('beta_theme')));   // default: logo colours, dark
 function applyTheme() {
@@ -1701,58 +1723,154 @@ async function openModels() {
 $('m-model-pick').addEventListener('click', () => { hide('menu'); openModels(); });
 $('models-close').addEventListener('click', () => hide('models'));
 
-// ---- Gemini traffic (live check)
-let trafficTimer = null, trafficRuns = 0;
-function renderTraffic(d) {
-  const body = $('traffic-body'); body.textContent = '';
-  const ban = document.createElement('div'); ban.className = 'tr-banner ' + d.verdict; ban.textContent = d.message; body.appendChild(ban);
-  d.models.forEach((m) => {
-    const row = document.createElement('div'); row.className = 'tr-row';
-    const head = document.createElement('div'); head.className = 'tr-head';
-    const dot = document.createElement('span'); dot.className = 'dot ' + m.state; head.appendChild(dot);
-    const nm = document.createElement('span'); nm.className = 'tr-name'; nm.textContent = shortModel(m.model); head.appendChild(nm);
-    const ms = document.createElement('span'); ms.className = 'tr-ms'; ms.textContent = m.ms + ' ms'; head.appendChild(ms);
-    row.appendChild(head);
-    const sub = document.createElement('div'); sub.className = 'tr-sub'; sub.textContent = m.detail; row.appendChild(sub);
-    const hist = document.createElement('div'); hist.className = 'tr-hist';
-    (m.history || []).slice(-24).forEach((h) => { const x = document.createElement('span'); x.className = 'dot ' + h.state; x.title = h.state + ' ' + h.ms + ' ms'; hist.appendChild(x); });
-    row.appendChild(hist); body.appendChild(row);
+// ---- System report: every check is its own row (waiting dot -> spinner -> tick / warning / cross) ----
+let srRun = 0, srRunning = false;
+const srMk = (tag, cls, text) => { const d = document.createElement(tag); if (cls) d.className = cls; if (text !== undefined) d.textContent = text; return d; };
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('No answer in time')), ms))]);
+const R = (state, detail, hint, ms) => ({ state, detail, hint: hint || '', ms: ms || 0 });
+
+// Checks that can only be made on this phone itself (the server can't see its clipboard, microphone or camera)
+const SR_DEVICE = [
+  { id: 'd-version', label: 'App files are up to date', run: async (srv) => {
+    if (!srv || !srv.version) return R('off', "Couldn't read the server's release number");
+    return CLIENT_VERSION === srv.version ? R('ok', 'Running release ' + CLIENT_VERSION)
+      : R('warn', 'This phone has release ' + CLIENT_VERSION + ', the server has ' + srv.version, 'Close the app and open it again, or open /reset on the site.');
+  } },
+  { id: 'd-conn', label: 'Connection to B.E.T.A.', run: async () => {
+    const t0 = performance.now();
+    const res = await fetch('/api/health', { cache: 'no-store', credentials: 'same-origin' });
+    const ms = Math.round(performance.now() - t0);
+    if (!res.ok) return R('fail', 'The server answered with an error (' + res.status + ')', '', ms);
+    return R(ms > 2500 ? 'slow' : 'ok', ms > 2500 ? 'Connected, but slowly' : 'Connected', ms > 2500 ? 'Your mobile signal may be weak.' : '', ms);
+  } },
+  { id: 'd-clip', label: 'Paste button (clipboard)', run: async () => {
+    if (NATIVE) return nativePlugin('Clipboard') ? R('ok', "The phone's clipboard is ready")
+      : R('fail', 'Missing from this version of the app (' + nativeInfo() + ')', 'Install the newest APK.');
+    return navigator.clipboard && (navigator.clipboard.read || navigator.clipboard.readText) ? R('ok', 'Browser clipboard available')
+      : R('warn', "This browser can't read the clipboard", 'Long-press the message box and choose Paste.');
+  } },
+  { id: 'd-mic', label: 'Voice input (microphone)', run: async () => {
+    if (NATIVE) {
+      const sp = nativePlugin('SpeechRecognition');
+      if (!sp) return R('fail', 'Missing from this version of the app (' + nativeInfo() + ')', 'Install the newest APK.');
+      try {
+        const av = await sp.available();
+        if (!av || !av.available) return R('fail', 'This phone has no speech recognition service', 'Use the microphone on your keyboard instead.');
+        const p = await sp.checkPermissions();
+        return p && p.speechRecognition === 'granted' ? R('ok', 'Allowed and ready')
+          : R('warn', 'Not allowed yet', 'The phone will ask the first time you tap the microphone.');
+      } catch (e) { return R('warn', "Couldn't check: " + ((e && e.message) || 'unknown problem')); }
+    }
+    return Recognition ? R('ok', 'Browser voice input available') : R('off', "Not available in this browser (use your keyboard's microphone)");
+  } },
+  { id: 'd-cam', label: 'Camera and video', run: async () => {
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const p = await navigator.permissions.query({ name: 'camera' });
+        if (p.state === 'granted') return R('ok', 'Camera allowed');
+        if (p.state === 'denied') return R('fail', 'Camera is blocked for B.E.T.A.', 'Allow Camera for B.E.T.A. in the phone settings.');
+        return R('ok', 'Will ask the first time you use Take photo');
+      }
+    } catch (e) { /* some phones refuse the question */ }
+    return R('off', "Can't be checked from here", 'Tap the paperclip and try Take photo.');
+  } },
+];
+
+function srGlyph(state) {
+  const g = srMk('span', 'sr-ico ' + state);
+  if (state === 'run') g.appendChild(srMk('i', 'sr-spin'));
+  else if (state === 'wait') g.appendChild(srMk('i', 'sr-wait'));
+  else if (state === 'off') g.textContent = '–';
+  else g.innerHTML = iconSvg(state === 'ok' ? 'check' : state === 'fail' ? 'x' : 'alert');
+  return g;
+}
+function srSetRow(row, state, detail, ms, hint) {
+  row.className = 'sr-row ' + state;
+  const old = row.querySelector('.sr-ico'); row.replaceChild(srGlyph(state), old);
+  row.querySelector('.sr-detail').textContent = detail;
+  row.querySelector('.sr-ms').textContent = ms ? (ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : ms + ' ms') : '';
+  const h = row.querySelector('.sr-hint'); h.textContent = hint || ''; h.classList.toggle('hidden', !hint);
+}
+function srBuildRow(label) {
+  const row = srMk('div', 'sr-row wait');
+  row.appendChild(srGlyph('wait'));
+  const main = srMk('div', 'sr-main');
+  main.appendChild(srMk('div', 'sr-name', label));
+  main.appendChild(srMk('div', 'sr-detail', 'Waiting…'));
+  main.appendChild(srMk('div', 'sr-hint hidden'));
+  row.appendChild(main);
+  row.appendChild(srMk('span', 'sr-ms'));
+  return row;
+}
+function srSummary(banner, counts, total, done, finished) {
+  const c = counts;
+  banner.className = 'sr-banner ' + (!finished ? 'running' : c.fail ? 'bad' : (c.warn || c.slow) ? 'mixed' : 'good');
+  if (!finished) { banner.textContent = 'Checking… ' + done + ' of ' + total + ' done'; return; }
+  const parts = [];
+  const working = c.ok + c.slow;
+  if (working) parts.push(working + ' working');
+  if (c.slow) parts.push(c.slow + ' slow');
+  if (c.warn) parts.push(c.warn + (c.warn === 1 ? ' warning' : ' warnings'));
+  if (c.fail) parts.push(c.fail + ' failed');
+  if (c.off) parts.push(c.off + ' not set up');
+  banner.textContent = (c.fail ? 'Problems found - ' : (c.warn || c.slow) ? 'Mostly working - ' : 'All good - ') + parts.join(' · ');
+}
+async function runSystemReport(full) {
+  if (srRunning) { toast('Still checking - one moment…'); return; }
+  srRunning = true; const token = ++srRun;
+  const quick = $('traffic-refresh'), fullBtn = $('traffic-full'), body = $('traffic-body'), note = $('traffic-note');
+  [quick, fullBtn].forEach((b) => { b.disabled = true; });
+  const pressed = full ? fullBtn : quick; pressed.classList.add('busy'); pressed.textContent = 'Checking…';
+  body.textContent = ''; note.textContent = '';
+  const banner = $('traffic-banner'); banner.className = 'sr-banner running'; banner.textContent = 'Getting ready…';
+  const jobs = [];                                     // {row, run: async () => result}
+  const addGroup = (title) => body.appendChild(cardLabel(title));
+  let srv = null, plan = [];
+  try { plan = await withTimeout(api('/api/system/plan' + (full ? '?full=1' : '')), 20000); srv = plan; plan = plan.checks || []; }
+  catch (e) { banner.className = 'sr-banner bad'; banner.textContent = "Couldn't reach B.E.T.A.'s server: " + (e.message || 'no answer'); }
+  if (token !== srRun) return;
+  addGroup('This phone');
+  SR_DEVICE.forEach((d) => { const row = srBuildRow(d.label); body.appendChild(row); jobs.push({ row, run: () => d.run(srv) }); });
+  let group = '';
+  plan.forEach((c) => {
+    if (c.group !== group) { group = c.group; addGroup(group); }
+    const row = srBuildRow(c.label); body.appendChild(row);
+    jobs.push({ row, run: () => api('/api/system/run?id=' + encodeURIComponent(c.id)) });
   });
-  const foot = document.createElement('div'); foot.className = 'tr-sub'; foot.style.marginTop = '8px';
-  foot.textContent = 'Checked at ' + new Date(d.checked_at * 1000).toLocaleTimeString() + '. Green = answering, yellow = slow, orange = limit reached, red = overloaded or silent. ';
-  const link = document.createElement('a'); link.textContent = "Google's own status page"; link.href = d.official_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
-  foot.appendChild(link); foot.appendChild(document.createTextNode(' (it often lags behind real overloads).')); body.appendChild(foot);
+  const counts = { ok: 0, slow: 0, warn: 0, fail: 0, off: 0 };
+  let done = 0, next = 0;
+  srSummary(banner, counts, jobs.length, 0, false);
+  const worker = async () => {
+    while (next < jobs.length) {
+      const job = jobs[next++];
+      if (token !== srRun) return;
+      srSetRow(job.row, 'run', 'Checking…');
+      let r;
+      try { r = await withTimeout(job.run(), 35000); }
+      catch (e) { r = R('fail', (e && e.message) || "The check didn't finish", 'Try the report again.'); }
+      if (token !== srRun) return;
+      const st = counts[r.state] !== undefined ? r.state : 'fail';
+      counts[st]++; done++;
+      srSetRow(job.row, st, r.detail || '', r.ms, r.hint);
+      srSummary(banner, counts, jobs.length, done, false);
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  if (token !== srRun) return;
+  srSummary(banner, counts, jobs.length, done, true);
+  note.textContent = 'Checked at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + (full ? ' · full check' : ' · quick check (the full check adds search and image generation)');
+  [quick, fullBtn].forEach((b) => { b.disabled = false; b.classList.remove('busy'); });
+  quick.textContent = 'Quick check'; fullBtn.textContent = 'Full check';
+  srRunning = false;
 }
-let trafficBusy = false;
-async function runTraffic(force) {
-  if (trafficBusy) { if (force) toast('Still checking - one moment…'); return; }
-  trafficBusy = true;
-  const btn = $('traffic-refresh'), body = $('traffic-body'), note = $('traffic-note');
-  btn.disabled = true; btn.classList.add('busy'); btn.textContent = 'Checking…';
-  body.classList.add('checking');
-  if (force) note.textContent = 'Asking every model again - this can take up to 25 seconds.';
-  try {
-    renderTraffic(await api('/api/gemini/status' + (force ? '?force=1' : '')));
-    note.textContent = force ? 'Updated just now ✓' : '';
-    if (force) setTimeout(() => { if (note.textContent === 'Updated just now ✓') note.textContent = ''; }, 3000);
-  } catch (e) {
-    const msg = e.message || "Couldn't check the servers.";
-    if (!body.querySelector('.tr-banner')) body.textContent = msg;                 // nothing to show yet: say what went wrong
-    note.textContent = body.querySelector('.tr-banner') ? msg + ' Tap Refresh now to try again.' : '';
-  }
-  body.classList.remove('checking'); btn.classList.remove('busy'); btn.textContent = 'Refresh now'; btn.disabled = false;
-  trafficBusy = false;
+function closeTraffic() {
+  srRun++;                                              // anything still running is ignored from now on
+  if (srRunning) { srRunning = false; const q = $('traffic-refresh'), f = $('traffic-full'); [q, f].forEach((b) => { b.disabled = false; b.classList.remove('busy'); }); q.textContent = 'Quick check'; f.textContent = 'Full check'; }
+  hide('traffic');
 }
-function closeTraffic() { if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; } hide('traffic'); }
-$('m-traffic').addEventListener('click', () => {
-  hide('menu'); show('traffic'); $('traffic-body').textContent = 'Asking the models…'; trafficRuns = 0; runTraffic(true);
-  if (trafficTimer) clearInterval(trafficTimer);
-  trafficTimer = setInterval(() => {                       // each check uses a little of each model's daily allowance, so it stops after a while
-    if (++trafficRuns > 10) { clearInterval(trafficTimer); trafficTimer = null; $('traffic-note').textContent = 'Live updates paused to save your daily allowance - tap Refresh now.'; return; }
-    runTraffic(false);
-  }, 30000);
-});
-$('traffic-refresh').addEventListener('click', () => runTraffic(true));
+$('m-traffic').addEventListener('click', () => { hide('menu'); show('traffic'); runSystemReport(false); });
+$('traffic-refresh').addEventListener('click', () => runSystemReport(false));
+$('traffic-full').addEventListener('click', () => runSystemReport(true));
 $('traffic-close').addEventListener('click', closeTraffic);
 
 // ---- K-10 mail screens
@@ -1874,7 +1992,7 @@ async function openHelp() {
       ['Watches a video from your phone (up to ' + (c.video_max_mb || 25) + ' MB; it uses mobile data to upload)', 'Try: attach a clip and ask "summarise this"']]],
     ['Control', [
       ['Choose the model by hand, including smarter ones for coding', null],
-      ['Gemini traffic: a live check of whether Google\'s servers are busy', null],
+      ['System report: tests the AI models, saved data, voice, search and your phone, and shows what is working', null],
       ['Themes, text size, clear the chat, lock the app', null]]],
   ];
   body.textContent = '';

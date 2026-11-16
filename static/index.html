@@ -96,7 +96,20 @@
       </div>
     </div>
     <input id="file-input" type="file" accept="image/*,video/*,.mp4,.mov,.webm,.3gp,.mkv,.txt,.md,.py,.js,.json,.csv,.html,.css,.xml,.yaml,.yml,.sh,.log,.docx" multiple hidden>
+    <input id="cam-photo" type="file" accept="image/*" capture="environment" hidden>
+    <input id="cam-video" type="file" accept="video/*" capture="environment" hidden>
   </footer>
+</div>
+
+<!-- Add to your message: camera, video or a file -->
+<div id="attach-sheet" class="overlay hidden">
+  <div class="sheet">
+    <div class="sheet-title">Add to your message</div>
+    <button class="sheet-item" id="at-photo"><span data-icon="camera"></span>Take a photo</button>
+    <button class="sheet-item" id="at-video"><span data-icon="video"></span>Record a video</button>
+    <button class="sheet-item" id="at-file"><span data-icon="clip"></span>Choose a file or gallery picture</button>
+    <button class="sheet-close" id="attach-close">Close</button>
+  </div>
 </div>
 
 <!-- Menu -->
@@ -111,7 +124,7 @@
     <button class="sheet-item" id="m-notify"><span id="m-notify-icon" data-icon="bell-off"></span><span id="m-notify-text">Notify me when a reply is ready: off</span></button>
     <button class="sheet-item hidden" id="m-termux"><span data-icon="terminal"></span><span id="m-termux-text">Termux: checking…</span></button>
     <button class="sheet-item" id="m-model-pick"><span data-icon="cpu"></span><span id="m-model-text">Model: Auto</span></button>
-    <button class="sheet-item" id="m-traffic"><span data-icon="activity"></span><span>Gemini traffic (live check)</span></button>
+    <button class="sheet-item" id="m-traffic"><span data-icon="activity"></span><span>System report</span></button>
     <button class="sheet-item hidden" id="m-k10"><span data-icon="mail"></span><span id="m-k10-text">K-10 mail</span></button>
     <button class="sheet-item" id="m-theme"><span id="m-theme-icon" data-icon="palette"></span><span id="m-theme-text">Theme: Logo colours · Dark</span></button>
     <button class="sheet-item" id="m-size"><span data-icon="text"></span><span id="m-size-text">Text size: Medium</span></button>
@@ -188,14 +201,18 @@
   </div>
 </div>
 
-<!-- Gemini traffic: a live check of how busy Google's servers are -->
+<!-- System report: tests everything B.E.T.A. needs and shows each result as it arrives -->
 <div id="traffic" class="overlay hidden">
   <div class="sheet tall">
-    <div class="sheet-title">Gemini traffic</div>
+    <div class="sheet-title">System report</div>
+    <div id="traffic-banner" class="sr-banner hidden"></div>
     <div id="traffic-body" class="sheet-scroll"></div>
     <div id="traffic-note" class="sheet-text"></div>
-    <button class="sheet-close" id="traffic-refresh">Refresh now</button>
-    <button class="sheet-close" id="traffic-close">Close</button>
+    <div class="sr-actions">
+      <button class="sheet-close" id="traffic-refresh">Quick check</button>
+      <button class="sheet-close" id="traffic-full">Full check</button>
+      <button class="sheet-close" id="traffic-close">Close</button>
+    </div>
   </div>
 </div>
 

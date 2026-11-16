@@ -168,9 +168,9 @@ button { font: inherit; color: inherit; }
 .copy-btn.done { color: var(--accent); border-color: var(--accent); }
 .block pre { margin: 0; padding: 12px; overflow-x: auto; font-family: "SF Mono", Consolas, "Roboto Mono", monospace; font-size: calc(14.5px * var(--ts, 1)); line-height: 1.5; color: #d9e2ec; white-space: pre; }
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }          /* only a fallback: tables now fit the screen */
-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: calc(13px * var(--ts, 1)); line-height: 1.4; }
-th, td { padding: 6px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); min-width: 0; white-space: pre-line;
-  word-break: break-word; overflow-wrap: anywhere; hyphens: auto; }                   /* words wrap inside their cell, so columns share the screen width */
+table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: calc(14px * var(--ts, 1)); line-height: 1.45; }
+th, td { padding: 9px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); min-width: 0; white-space: pre-line;
+  word-break: normal; overflow-wrap: break-word; hyphens: none; }                     /* lines wrap between words; a word is only split if it is wider than the whole cell */
 th { background: #0b0d13; color: var(--accent-2); font-weight: 700; box-shadow: inset 0 -1px 0 var(--accent); border-bottom: none; }
 td:first-child { font-weight: 600; }
 tbody tr:nth-child(even) td { background: rgba(255,255,255,0.06); }
@@ -479,3 +479,57 @@ html[data-theme="lavender"] .iv-chip.on { color: #ffffff; }
   border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; }
 #traffic-body { transition: opacity 0.2s; }
 #traffic-body.checking { opacity: 0.45; }
+
+
+/* ====================================================================
+ * v4.9: wide tables become one card per row, the System report, status colours
+ * ==================================================================== */
+:root { --ok: #3ddc97; --amber: #fbbf24; }
+
+/* A table with 4+ columns can't share a phone screen without chopping words, so every row is a small card:
+ * a title line (the first real column), then each remaining value under its own small label. */
+.tbl-cards, .tbl-cards tbody { display: block; width: 100%; }
+.tbl-cards { padding: 8px; }
+.tbl-cards thead { display: none; }
+.tbl-cards tr { display: flex; flex-direction: column; margin: 0 0 10px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  background: rgba(127,127,127,0.07); }
+.tbl-cards tr:last-child { margin-bottom: 0; }
+.tbl-cards td { display: block; padding: 8px 12px; border: none; border-top: 1px solid var(--border); background: none !important; text-align: left !important; }
+.tbl-cards td::before { content: attr(data-label); display: block; margin-bottom: 2px; color: var(--dim); font-size: calc(11.5px * var(--ts, 1));
+  font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.tbl-cards td.card-title { order: -1; border-top: none; font-size: calc(15.5px * var(--ts, 1)); font-weight: 700; color: var(--accent-2);
+  background: rgba(127,127,127,0.14) !important; }
+.tbl-cards td.card-title::before { display: none; }
+.tbl-cards td:empty { display: none; }
+.tbl-cards tbody tr:nth-child(even) td { background: none !important; }
+
+/* ---------- System report ---------- */
+@keyframes srPop { from { transform: scale(0.5); opacity: 0; } to { transform: none; opacity: 1; } }
+.sr-banner { margin: 0 0 8px; padding: 11px 14px; border-radius: 12px; font-weight: 700; font-size: calc(14.5px * var(--ts, 1)); line-height: 1.4;
+  border: 1px solid var(--border); background: rgba(127,127,127,0.1); }
+.sr-banner.running { color: var(--accent-2); }
+.sr-banner.good { color: var(--ok); background: rgba(52,211,153,0.13); border-color: rgba(52,211,153,0.5); }
+.sr-banner.mixed { color: var(--amber); background: rgba(251,191,36,0.13); border-color: rgba(251,191,36,0.5); }
+.sr-banner.bad { color: var(--danger); background: rgba(254,99,109,0.13); border-color: rgba(254,99,109,0.5); }
+.sr-row { display: flex; align-items: flex-start; padding: 9px 4px; border-bottom: 1px solid var(--border); transition: background 0.25s; }
+.sr-row.run { background: rgba(127,127,127,0.07); }
+.sr-ico { flex: 0 0 26px; width: 26px; height: 26px; margin-right: 12px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: calc(15px * var(--ts, 1)); font-weight: 800; background: rgba(127,127,127,0.16); color: var(--dim); }
+.sr-ico.ok { background: rgba(52,211,153,0.2); color: var(--ok); }
+.sr-ico.slow, .sr-ico.warn { background: rgba(251,191,36,0.2); color: var(--amber); }
+.sr-ico.fail { background: rgba(254,99,109,0.2); color: var(--danger); }
+.sr-ico.ok, .sr-ico.slow, .sr-ico.warn, .sr-ico.fail { animation: srPop 0.3s cubic-bezier(.2,.8,.2,1) backwards; }
+.sr-spin { display: block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(127,127,127,0.35); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+.sr-wait { display: block; width: 8px; height: 8px; border-radius: 50%; background: rgba(127,127,127,0.5); }
+.sr-main { flex: 1; min-width: 0; }
+.sr-name { font-weight: 700; font-size: calc(15px * var(--ts, 1)); }
+.sr-detail { margin-top: 2px; color: var(--dim); font-size: calc(13.5px * var(--ts, 1)); line-height: 1.4; overflow-wrap: break-word; }
+.sr-hint { margin-top: 3px; color: var(--amber); font-size: calc(13px * var(--ts, 1)); line-height: 1.4; }
+.sr-row.fail .sr-hint { color: var(--danger); }
+.sr-ms { margin-left: 8px; padding-top: 3px; color: var(--dim); font-size: calc(12px * var(--ts, 1)); white-space: nowrap; }
+
+.sr-actions { display: flex; margin-top: 10px; flex-shrink: 0; }
+.sr-actions .sheet-close { margin-top: 0; margin-left: 8px; flex: 1; padding: 12px 6px; }
+.sr-actions .sheet-close:first-child { margin-left: 0; }
+#traffic-note { flex-shrink: 0; margin-top: 8px; font-size: calc(13px * var(--ts, 1)); color: var(--dim); }
+#traffic-banner { flex-shrink: 0; }
