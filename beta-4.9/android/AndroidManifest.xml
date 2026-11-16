@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+xmlns:amazon="http://schemas.amazon.com/apk/res/android">
+
+<!-- v4.9: lets the "Take a photo" and "Record a video" buttons open the phone's camera from inside the app -->
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-feature android:name="android.hardware.camera" android:required="false" />
+<queries>
+  <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+  <intent><action android:name="android.media.action.VIDEO_CAPTURE" /></intent>
+  <intent><action android:name="android.intent.action.GET_CONTENT" /><data android:mimeType="*/*" /></intent>
+</queries>
+
+<application  >
+
+</application>
+
+</manifest>
