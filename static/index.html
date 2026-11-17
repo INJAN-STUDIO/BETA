@@ -18,7 +18,7 @@
 </head>
 <body>
 
-<!-- Waking the server (Render's free plan sleeps after 15 min idle) -->
+<!-- Starting up: waits for the server, then shows the login or the chat -->
 <div id="wake" class="screen">
   <div class="screen-card">
     <div class="logo-wrap"><img class="logo-img" src="/static/logo.jpg" alt="B.E.T.A" width="116" height="116"><span class="logo-ring"></span></div>
@@ -117,23 +117,32 @@
   <div class="sheet menu-sheet">
     <div class="sheet-title">Menu</div>
     <div class="menu-scroll">
-    <button class="sheet-item" id="m-memory"><span data-icon="bookmark"></span>Long-term memory</button>
-    <button class="sheet-item" id="m-help"><span data-icon="help"></span>What can B.E.T.A. do?</button>
-    <button class="sheet-item" id="m-voice"><span id="m-voice-icon" data-icon="speaker"></span><span id="m-voice-text">Read replies aloud (Brian): off</span></button>
-    <button class="sheet-item" id="m-voicepick"><span data-icon="speaker"></span><span id="m-voicepick-text">Voice: Brian</span></button>
-    <button class="sheet-item" id="m-notify"><span id="m-notify-icon" data-icon="bell-off"></span><span id="m-notify-text">Notify me when a reply is ready: off</span></button>
-    <button class="sheet-item hidden" id="m-termux"><span data-icon="terminal"></span><span id="m-termux-text">Termux: checking…</span></button>
-    <button class="sheet-item" id="m-model-pick"><span data-icon="cpu"></span><span id="m-model-text">Model: Auto</span></button>
-    <button class="sheet-item" id="m-traffic"><span data-icon="activity"></span><span>System report</span></button>
-    <button class="sheet-item hidden" id="m-k10"><span data-icon="mail"></span><span id="m-k10-text">K-10 mail</span></button>
-    <button class="sheet-item" id="m-theme"><span id="m-theme-icon" data-icon="palette"></span><span id="m-theme-text">Theme: Logo colours · Dark</span></button>
-    <button class="sheet-item" id="m-size"><span data-icon="text"></span><span id="m-size-text">Text size: Medium</span></button>
-    <button class="sheet-item hidden" id="m-friends"><span data-icon="users"></span>Friends and invites</button>
-    <button class="sheet-item hidden" id="m-key"><span data-icon="key"></span><span id="m-key-text">Use my own free key</span></button>
-    <button class="sheet-item hidden" id="m-export"><span data-icon="download"></span>Export my data</button>
-    <button class="sheet-item hidden" id="m-delete"><span data-icon="trash"></span>Delete my account</button>
-    <button class="sheet-item" id="m-clear"><span data-icon="trash"></span>Clear this conversation</button>
-    <button class="sheet-item" id="m-logout"><span data-icon="lock"></span>Lock B.E.T.A.</button>
+    <div class="menu-h">Chat</div>
+    <button class="sheet-item" id="m-memory"><span data-icon="bookmark"></span><span class="mi">Long-term memory</span></button>
+    <button class="sheet-item" id="m-help"><span data-icon="help"></span><span class="mi">What can B.E.T.A. do?</span></button>
+
+    <div class="menu-h">Voice and alerts</div>
+    <button class="sheet-item" id="m-voice"><span id="m-voice-icon" data-icon="speaker"></span><span class="mi" id="m-voice-text">Read replies aloud</span></button>
+    <button class="sheet-item" id="m-voicepick"><span data-icon="speaker"></span><span class="mi" id="m-voicepick-text">Voice</span></button>
+    <button class="sheet-item" id="m-notify"><span id="m-notify-icon" data-icon="bell-off"></span><span class="mi" id="m-notify-text">Notify me when a reply is ready</span></button>
+
+    <div class="menu-h">Tools</div>
+    <button class="sheet-item" id="m-model-pick"><span data-icon="cpu"></span><span class="mi" id="m-model-text">Model</span></button>
+    <button class="sheet-item" id="m-traffic"><span data-icon="activity"></span><span class="mi">System report</span></button>
+    <button class="sheet-item hidden" id="m-k10"><span data-icon="mail"></span><span class="mi" id="m-k10-text">K-10 mail</span></button>
+    <button class="sheet-item hidden" id="m-termux"><span data-icon="terminal"></span><span class="mi" id="m-termux-text">Termux</span></button>
+
+    <div class="menu-h">Look</div>
+    <button class="sheet-item" id="m-theme"><span id="m-theme-icon" data-icon="palette"></span><span class="mi" id="m-theme-text">Theme</span></button>
+    <button class="sheet-item" id="m-size"><span data-icon="text"></span><span class="mi" id="m-size-text">Text size</span></button>
+
+    <div class="menu-h">Account</div>
+    <button class="sheet-item hidden" id="m-friends"><span data-icon="users"></span><span class="mi">Friends and invites</span></button>
+    <button class="sheet-item hidden" id="m-key"><span data-icon="key"></span><span class="mi" id="m-key-text">Use my own free key</span></button>
+    <button class="sheet-item hidden" id="m-export"><span data-icon="download"></span><span class="mi">Export my data</span></button>
+    <button class="sheet-item" id="m-clear"><span data-icon="trash"></span><span class="mi">Clear this conversation</span></button>
+    <button class="sheet-item hidden" id="m-delete"><span data-icon="trash"></span><span class="mi">Delete my account</span></button>
+    <button class="sheet-item" id="m-logout"><span data-icon="lock"></span><span class="mi">Lock B.E.T.A.</span></button>
     <div class="sheet-models" id="m-models"></div>
     <div class="sheet-version" id="m-version"></div>
     </div>

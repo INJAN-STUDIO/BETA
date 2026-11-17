@@ -6,6 +6,9 @@ xmlns:amazon="http://schemas.amazon.com/apk/res/android">
 <uses-permission android:name="android.permission.CAMERA" />
 <uses-permission android:name="android.permission.RECORD_AUDIO" />
 <uses-feature android:name="android.hardware.camera" android:required="false" />
+<!-- v5.0: reply alerts through Firebase Cloud Messaging. Android 13 and newer ask for this permission; older Android
+     (like the Honor 8X) simply allows notifications. -->
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 <queries>
   <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
   <intent><action android:name="android.media.action.VIDEO_CAPTURE" /></intent>
@@ -13,7 +16,8 @@ xmlns:amazon="http://schemas.amazon.com/apk/res/android">
 </queries>
 
 <application  >
-
+  <!-- v5.0: alerts that arrive while the app is closed use the "Replies" channel the app creates (see fcm_push.py) -->
+  <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="beta_replies" />
 </application>
 
 </manifest>

@@ -76,7 +76,7 @@ def plan(owner, models):
     rows.append({"id": "groq", "label": "Groq backup models", "group": "AI models", "full": False})
     rows.append({"id": "tts", "label": "Read-aloud voice", "group": "Services", "full": False})
     if owner:
-        rows.append({"id": "ntfy", "label": "Reply alerts (ntfy)", "group": "Services", "full": False})
+        rows.append({"id": "alerts", "label": "Reply alerts", "group": "Services", "full": False})
         rows.append({"id": "k10", "label": "K-10 mail", "group": "Services", "full": False})
         rows.append({"id": "termux", "label": "Termux bridge", "group": "Services", "full": False})
     rows.append({"id": "search", "label": "Web and image search", "group": "Services", "full": True})
@@ -172,21 +172,26 @@ def check_tts(x):
     return _res(SLOW if ms > 6000 else OK, "Voice answered (%d KB of audio)" % max(1, len(audio) // 1024), ms)
 
 
-def check_ntfy(x):
-    topic = os.environ.get("NTFY_TOPIC", "").strip()
-    if not topic:
-        return _res(OFF, "Not set up (NTFY_TOPIC is missing)")
-    server = (os.environ.get("NTFY_SERVER", "").strip() or "https://ntfy.sh").rstrip("/")
-    code, text, ms = _http(server + "/v1/health", timeout=8)
-    if code != 200:
-        return _res(FAIL, "The ntfy server didn't answer properly (%s)." % (code or "no reply"), ms,
-                    "Check NTFY_SERVER, or try again - ntfy.sh is sometimes slow.")
-    last = x.get("last_alert") or {}
-    if last.get("ok") is False:
-        return _res(WARN, "ntfy is reachable, but your last alert failed: %s" % str(last.get("detail", ""))[:120], ms,
-                    "If it says 429, add a free NTFY_TOKEN on Render.")
-    note = " (switched off in the menu)" if not x.get("ntfy_on", True) else ""
-    return _res(OK, "ntfy server is healthy" + note, ms)
+def check_alerts(x):
+    """'Notify me when a reply is ready': FCM for the Android app, browser push for the web page. Sends nothing."""
+    f = x.get("fcm") or {}
+    web = int(x.get("web_subs") or 0)
+    last = f.get("last") or {}
+    if f.get("ready"):
+        if f.get("tokens"):
+            if last.get("ok") is False:
+                return _res(WARN, "Your last alert did not arrive: %s" % str(last.get("detail", ""))[:120], 0,
+                            "Open the app and switch 'Notify me when a reply is ready' off and on again.")
+            return _res(OK, "Ready - %d phone%s registered" % (f["tokens"], "" if f["tokens"] == 1 else "s"))
+        if web:
+            return _res(OK, "Browser notifications are on")
+        return _res(WARN, "Set up, but no phone is registered yet", 0,
+                    "In the app, turn on 'Notify me when a reply is ready'.")
+    if web:
+        return _res(OK, "Browser notifications are on (the Android app needs the Firebase key to get alerts)")
+    if x.get("legacy"):
+        return _res(WARN, "Alerts work on a backup channel only", 0, "Finish the Firebase setup (FIREBASE_SERVICE_ACCOUNT on Render).")
+    return _res(OFF, "Not set up (FIREBASE_SERVICE_ACCOUNT is missing)")
 
 
 def check_k10(x):
@@ -255,7 +260,7 @@ def check_imagegen(x):
 # ---------------------------------------------------------------------------
 
 SIMPLE = {"server": check_server, "storage": check_storage, "memory": check_memory, "groq": check_groq, "tts": check_tts,
-          "ntfy": check_ntfy, "k10": check_k10, "termux": check_termux, "search": check_search, "imagegen": check_imagegen}
+          "alerts": check_alerts, "k10": check_k10, "termux": check_termux, "search": check_search, "imagegen": check_imagegen}
 
 
 def run(check_id, x, uid, allowed_ids):

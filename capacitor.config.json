@@ -5,9 +5,20 @@
   "backgroundColor": "#0b1220",
   "server": {
     "url": "https://beta-033v.onrender.com/",
-    "allowNavigation": ["beta-033v.onrender.com"]
+    "allowNavigation": [
+      "beta-033v.onrender.com"
+    ]
   },
   "android": {
     "allowMixedContent": false
+  },
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
+    }
   }
 }

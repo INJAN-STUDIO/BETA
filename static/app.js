@@ -84,13 +84,13 @@ async function api(path, { method = 'GET', body } = {}) {
 }
 
 let toastTimer = null;
-function toast(msg, failed) {
+function toast(msg, failed, ms) {
   const t = $('toast');
   t.textContent = msg;
   t.classList.toggle('failed', !!failed);
   t.classList.remove('hidden');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.add('hidden'), 1500);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), ms || 1500);
 }
 
 async function copyText(text) {
@@ -792,17 +792,78 @@ const store = {
 };
 let voiceOn = store.get('beta_voice') === '1';
 
-function cleanForSpeech(text) {
-  return String(text || '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/^\s*\|.*\|\s*$/gm, ' ')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/[`*#>_]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+// One menu row = a label on the left and, where there is a state, a small value chip on the right ("off", "Brian",
+// "connected"). tone: 'good' (green), 'bad' (red), 'accent' (highlight) or '' (plain).
+function menuRow(id, label, value, tone) {
+  const el = $(id); el.textContent = '';
+  const l = document.createElement('span'); l.className = 'mi-label'; l.textContent = label; el.appendChild(l);
+  if (value != null && value !== '') {
+    const v = document.createElement('span'); v.className = 'mi-val' + (tone ? ' ' + tone : ''); v.textContent = value; el.appendChild(v);
+  }
 }
-const speakable = cleanForSpeech;                         // (the old version cut every reply off at 900 characters)
+
+// What B.E.T.A. SAYS is not what it WRITES. A person talking would not read out a code block, a table, a web address,
+// "pound pound heading", or an emoji, so this turns the written reply into what a person would actually say:
+//   * code blocks and tables are skipped, and one short sentence says they are on screen instead
+//   * links keep their words but lose the address; markdown marks, emojis, footnote numbers, "Sources:" lists go
+//   * headings and bullet points become short sentences, so the voice pauses where a person would
+// The server runs the same rules (speech_text.py) before it makes the voice, so both ways sound the same.
+const CODE_MARK = '\u0001CODE\u0001', TABLE_MARK = '\u0001TABLE\u0001';
+function speakable(text) {
+  let t = String(text || '').replace(/\r\n?/g, '\n');
+  t = t.replace(/(```|~~~)[\s\S]*?(\1|$)/g, '\n' + CODE_MARK + '\n');
+  t = t.replace(/(?:^[ \t]*\|.*\|[ \t]*\n?)+/gm, '\n' + TABLE_MARK + '\n');
+  t = t.replace(/^[ \t]*(?:\*\*|__)?(?:sources?|references?|further reading)(?:\*\*|__)?[ \t]*:?[ \t]*(?:\*\*|__)?[ \t]*$[\s\S]*/gmi, '');
+  t = t.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+       .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+       .replace(/<[^>\n]{1,200}>/g, ' ')
+       .replace(/\bhttps?:\/\/\S+/g, ' the link ')
+       .replace(/\bwww\.\S+/g, ' the link ')
+       .replace(/\[\^?\d{1,3}\]/g, '')
+       .replace(/`([^`\n]+)`/g, (m, code) => {
+         code = code.trim();
+         const symbols = (code.match(/[\/\\{}\[\]()<>=;|$]/g) || []).length;
+         return (code.length > 28 || symbols >= 3) ? ' ' : ' ' + code + ' ';      // a long path or command: nobody reads that aloud
+       })
+       .replace(/`/g, '');
+  t = t.replace(/^[ \t]*([-*_][ \t]*){3,}$/gm, '')
+       .replace(/^[ \t]*#{1,6}[ \t]+(.+?)[ \t#]*$/gm, '$1.')
+       .replace(/^[ \t]*>+[ \t]?/gm, '')
+       .replace(/^[ \t]*(?:[-*•+]|\d{1,3}[.)])[ \t]+/gm, '');
+  t = t.replace(/(\*\*|__)(.+?)\1/g, '$2')
+       .replace(/~~(.+?)~~/g, '$1')
+       .replace(/\*([^*\n]+)\*/g, '$1')
+       .replace(/(^|[\s(])_+([^_\n]+?)_+(?=$|[\s).,!?:;])/gm, '$1$2');
+  t = t.replace(/→/g, ' to ').replace(/->/g, ' to ').replace(/=>/g, ' to ')
+       .replace(/[←-⇿⌀-⏿─-➿⬀-⯿️‍]|[\uD83C-\uD83E][\uDC00-\uDFFF]/g, ' ')
+       .replace(/\s*[—–]\s*/g, ', ')
+       .replace(/(\d)\s*%/g, '$1 percent')
+       .replace(/(\d)\s*[x×]\s*(\d)/g, '$1 by $2')
+       .replace(/&/g, ' and ')
+       .replace(/~\s*(?=\d)/g, 'about ');
+  const out = []; let saidCode = false, saidTable = false;
+  t.split('\n').forEach((raw) => {
+    let line = raw.trim();
+    if (!line) return;
+    if (line.indexOf(CODE_MARK) >= 0 || line.indexOf(TABLE_MARK) >= 0) {
+      if (line.indexOf(CODE_MARK) >= 0) saidCode = true;
+      if (line.indexOf(TABLE_MARK) >= 0) saidTable = true;
+      line = line.split(CODE_MARK).join(' ').split(TABLE_MARK).join(' ').trim();
+      if (!line) return;
+    }
+    line = line.replace(/[\[\]|^#*_~]+/g, ' ').replace(/\(\s*\)/g, ' ').replace(/\s+/g, ' ').replace(/^[ ,-]+|[ ,-]+$/g, '');
+    if (!line) return;
+    if (!/[.!?:;,…]['"”’)\]]*$/.test(line)) line += '.';
+    out.push(line);
+  });
+  if (saidCode) out.push("I've put the code on screen.");
+  if (saidTable) out.push("I've put a table on screen.");
+  return out.join(' ')
+    .replace(/\s+([.,!?;:])/g, '$1')
+    .replace(/([.!?])(\s*\.)+/g, '$1')
+    .replace(/\s+/g, ' ').trim();
+}
+const cleanForSpeech = speakable;                         // (older name, still used below)
 
 // Cut the reply into pieces of whole sentences (about 450 characters each), so a long reply is read to the end and a
 // piece never stops mid-sentence. The next piece is fetched while the current one plays, so there is no gap.
@@ -947,8 +1008,8 @@ async function loadVoice() {
 }
 function refreshVoiceMenu() {
   setIcon($('m-voice-icon'), voiceOn ? 'speaker' : 'speaker-off');
-  $('m-voice-text').textContent = 'Read replies aloud: ' + (voiceOn ? 'on' : 'off');
-  $('m-voicepick-text').textContent = 'Voice: ' + voiceName();
+  menuRow('m-voice-text', 'Read replies aloud', voiceOn ? 'on' : 'off', voiceOn ? 'good' : '');
+  menuRow('m-voicepick-text', 'Voice', voiceName());
 }
 
 // Plays a short sample of a voice (the server makes it, same as a real reply).
@@ -1301,7 +1362,9 @@ function handleEvent(ev) {
     stopCooldown();
     $('activity').classList.add('hidden');
     const bubble = addMessage('ai', ev.text, true);
-    if (voiceOn) speak(ev.text, bubble.querySelector('.listen-btn'));
+    // The Copy button also has the "listen-btn" class (for its look), so pick the real Listen button explicitly -
+    // otherwise Copy is the one that turns into "Listen / Stop" while a reply is read aloud.
+    if (voiceOn) speak(ev.text, bubble.querySelector('.listen-btn:not(.copy-btn)'));
   }
   else if (ev.type === 'error') addMessage('error', ev.text);
   else if (ev.type === 'notice') addNotice(ev.text);
@@ -1354,7 +1417,7 @@ const TEXT_SIZES = [['Small', 0.9], ['Medium', 1], ['Large', 1.18]];
 let sizeIdx = Math.min(2, Math.max(0, parseInt(store.get('beta_size') || '1', 10) || 1));
 function applyTextSize() {
   document.documentElement.style.setProperty('--ts', TEXT_SIZES[sizeIdx][1]);
-  $('m-size-text').textContent = 'Text size: ' + TEXT_SIZES[sizeIdx][0];
+  menuRow('m-size-text', 'Text size', TEXT_SIZES[sizeIdx][0]);
 }
 $('m-size').addEventListener('click', () => { sizeIdx = (sizeIdx + 1) % TEXT_SIZES.length; store.set('beta_size', String(sizeIdx)); applyTextSize(); });
 applyTextSize();
@@ -1375,13 +1438,21 @@ const THEMES = [
   { id: 'paper', name: 'Paper · Warm light', bar: '#fee7db', icon: 'palette', kind: 'light', sw: ["#fee7db", "#b45309", "#92400e"] },
   { id: 'mint', name: 'Mint · Light', bar: '#d5f6e0', icon: 'palette', kind: 'light', sw: ["#d5f6e0", "#0f8f55", "#0b7344"] },
   { id: 'lavender', name: 'Lavender · Light', bar: '#ece9ff', icon: 'palette', kind: 'light', sw: ["#ece9ff", "#7c3aed", "#6d28d9"] },
+  { id: 'crimson', name: 'Crimson · Dark', bar: '#240002', icon: 'palette', kind: 'dark', sw: ["#240002", "#f52d44", "#fdb4b0"] },
+  { id: 'gold', name: 'Gold · Dark', bar: '#140c00', icon: 'palette', kind: 'dark', sw: ["#140c00", "#a88417", "#e1c786"] },
+  { id: 'lime', name: 'Lime · Dark', bar: '#081100', icon: 'palette', kind: 'dark', sw: ["#081100", "#6c9a02", "#b8d597"] },
+  { id: 'indigo', name: 'Indigo · Dark', bar: '#020533', icon: 'palette', kind: 'dark', sw: ["#020533", "#597efa", "#b4c8fc"] },
+  { id: 'magenta', name: 'Magenta · Dark', bar: '#1f0018', icon: 'palette', kind: 'dark', sw: ["#1f0018", "#da3cb8", "#f2b2de"] },
+  { id: 'graphite', name: 'Graphite · Dark', bar: '#090e13', icon: 'palette', kind: 'dark', sw: ["#090e13", "#7b8b9f", "#c3cad3"] },
+  { id: 'sky', name: 'Sky · Light', bar: '#dbf0fe', icon: 'palette', kind: 'light', sw: ["#dbf0fe", "#1a81b5", "#076796"] },
+  { id: 'peach', name: 'Peach · Light', bar: '#fee7dc', icon: 'palette', kind: 'light', sw: ["#fee7dc", "#b75a22", "#93491a"] },
 ];
 let themeIdx = Math.max(0, THEMES.findIndex((t) => t.id === store.get('beta_theme')));   // default: logo colours, dark
 function applyTheme() {
   const t = THEMES[themeIdx];
   document.documentElement.setAttribute('data-theme', t.id);
   const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.setAttribute('content', t.bar);
-  $('m-theme-text').textContent = 'Theme: ' + t.name;
+  menuRow('m-theme-text', 'Theme', t.name.replace(/ · /g, ' ').replace(/\s*\(ALPHA\)/, ''));
   setIcon($('m-theme-icon'), t.icon);
 }
 function setTheme(id, persist) {
@@ -1527,7 +1598,7 @@ async function refreshTermuxMenu() {
     const s = await api('/api/term/status');
     if (!s.enabled) { item.classList.add('hidden'); return; }
     item.classList.remove('hidden');
-    $('m-termux-text').textContent = s.connected ? 'Termux: connected' : 'Termux: not running - start termux_agent.py';
+    menuRow('m-termux-text', 'Termux', s.connected ? 'connected' : 'not running', s.connected ? 'good' : 'bad');
   } catch (e) { item.classList.add('hidden'); }
 }
 $('m-termux').addEventListener('click', refreshTermuxMenu);
@@ -1683,9 +1754,9 @@ const shortModel = (m) => String(m || '').replace(/^groq:/, '').replace(/^gemini
 async function refreshModelMenu() {
   try {
     const d = await api('/api/models');
-    $('m-model-text').textContent = d.forced ? 'Model: ' + shortModel(d.active) + ' (you chose)' : 'Model: Auto (' + shortModel(d.active) + ' now)';
+    menuRow('m-model-text', 'Model', d.forced ? shortModel(d.active) : 'Auto');
     return d;
-  } catch (e) { $('m-model-text').textContent = 'Model: Auto'; return null; }
+  } catch (e) { menuRow('m-model-text', 'Model', 'Auto'); return null; }
 }
 async function openModels() {
   const body = $('models-body'); body.textContent = 'Loading…'; show('models');
@@ -1880,8 +1951,88 @@ async function refreshK10Menu() {
     const d = await api('/api/k10/info');
     if (!d.enabled) { item.classList.add('hidden'); return; }
     item.classList.remove('hidden');
-    $('m-k10-text').textContent = 'K-10 mail' + (d.ready === false ? ' (reconnecting…)' : (d.new ? ' (' + d.new + ' new)' : ''));
+    $('menu-btn').classList.toggle('dot', !!d.new);
+    menuRow('m-k10-text', 'K-10 mail', d.ready === false ? 'reconnecting…' : (d.new ? d.new + ' new' : ''), d.new ? 'accent' : '');
   } catch (e) { item.classList.add('hidden'); }
+}
+// Press and hold (about half a second) on touch screens, or right-click / Android's own long-press with a mouse.
+function attachLongPress(el, fn) {
+  let timer = null, sx = 0, sy = 0;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  const fire = () => { el._lp = true; setTimeout(() => { el._lp = false; }, 700); try { if (navigator.vibrate) navigator.vibrate(15); } catch (e) { /* ignore */ } fn(); };
+  el.addEventListener('touchstart', (e) => { const t = e.touches[0]; sx = t.clientX; sy = t.clientY; cancel(); timer = setTimeout(() => { timer = null; fire(); }, 480); }, { passive: true });
+  el.addEventListener('touchmove', (e) => { const t = e.touches[0]; if (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10) cancel(); }, { passive: true });
+  ['touchend', 'touchcancel'].forEach((ev) => el.addEventListener(ev, cancel));
+  el.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!el._lp) fire(); });
+}
+
+// A small pop-up menu next to the thing you pressed. items: [{ label, icon, danger, run }]
+function popMenu(anchor, items) {
+  const old = document.getElementById('pop-ov'); if (old) old.remove();
+  const ov = document.createElement('div'); ov.id = 'pop-ov'; ov.className = 'pop-ov';
+  const card = document.createElement('div'); card.className = 'pop';
+  const opened = Date.now();
+  const close = () => ov.remove();
+  items.forEach((it) => {
+    const b = document.createElement('button'); b.type = 'button'; if (it.danger) b.className = 'danger';
+    const ic = document.createElement('span'); setIcon(ic, it.icon); b.appendChild(ic);
+    b.appendChild(document.createTextNode(it.label));
+    b.addEventListener('click', (e) => { e.stopPropagation(); close(); it.run(); });
+    card.appendChild(b);
+  });
+  ov.appendChild(card);
+  ov.addEventListener('click', () => { if (Date.now() - opened > 350) close(); });      // ignore the finger lifting from the press
+  document.body.appendChild(ov);
+  const r = anchor.getBoundingClientRect(), vh = window.innerHeight, ch = card.offsetHeight || 110;
+  let top = r.bottom + 6; if (top + ch > vh - 12) top = Math.max(12, r.top - ch - 6);
+  card.style.top = top + 'px';
+  card.style.left = Math.max(12, Math.min(r.left + 12, window.innerWidth - card.offsetWidth - 12)) + 'px';
+}
+async function k10Resend(m, tab) {
+  try {
+    const r = await api('/api/k10/resend', { method: 'POST', body: { id: m.id } });
+    if (r.kind === 'to_alpha') { toast('Sent to ALPHA again'); k10Tab('sent'); return; }
+    hide('k10');
+    if (r.files && r.files.length) addFiles({ files: r.files });
+    $('input').value = r.text; autosize();
+    if (busy) toast('B.E.T.A. is busy - the mail is in your message box; send it when ready.', true); else send();
+  } catch (e) { toast(e.message || "Couldn't send it again.", true); }
+}
+function k10Pop(m, tab, el) {
+  popMenu(el, [
+    tab === 'inbox'
+      ? { label: 'Resend to B.E.T.A.', icon: 'send', run: () => k10Resend(m, tab) }
+      : { label: 'Resend to ALPHA', icon: 'send', run: () => k10Resend(m, tab) },
+    { label: 'Delete', icon: 'trash', danger: true, run: async () => {
+        const ok = await askConfirm('Delete this message?', 'It is removed from your mail list. ALPHA keeps his own copy.', 'Delete');
+        if (!ok) return;
+        try { await api('/api/k10/delete', { method: 'POST', body: { id: m.id } }); toast('Deleted'); k10Tab(tab); refreshK10Menu(); }
+        catch (e) { toast(e.message || "Couldn't delete it.", true); }
+      } },
+  ]);
+}
+
+// New mail from ALPHA while the app is open: a short alert and a dot on the menu button. (When the app is closed, the
+// phone gets a notification instead - see the notification code above.)
+let k10Seen = null, k10Timer = null;
+async function k10Watch() {
+  if (document.hidden || (ME && !ME.owner)) return;
+  try {
+    const d = await api('/api/k10/info');
+    if (!d.enabled || d.new == null) return;
+    $('menu-btn').classList.toggle('dot', d.new > 0);
+    if (k10Seen != null && d.new > k10Seen) {
+      toast('New mail from ALPHA - open Menu, then K-10 mail', false, 4500);
+      try { if (navigator.vibrate) navigator.vibrate([40, 60, 40]); } catch (e) { /* ignore */ }
+    }
+    k10Seen = d.new;
+  } catch (e) { /* offline or K-10 not set up: stay quiet */ }
+}
+function startK10Watch() {
+  if (k10Timer) return;
+  k10Watch();
+  k10Timer = setInterval(k10Watch, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) k10Watch(); });
 }
 function k10Time(ts) { return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 async function k10Tab(tab) {
@@ -1897,7 +2048,9 @@ async function k10Tab(tab) {
       const s2 = document.createElement('div'); s2.className = 'k10-meta';
       s2.textContent = (tab === 'inbox' ? 'From ALPHA' : 'To ALPHA') + ' · ' + k10Time(m.ts) + ' · ' + m.state + (m.attachment ? ' · file: ' + m.attachment.name : ''); b.appendChild(s2);
       if (m.preview) { const s3 = document.createElement('div'); s3.className = 'k10-prev'; s3.textContent = m.preview; b.appendChild(s3); }
-      b.addEventListener('click', () => k10Open(m.id, tab)); body.appendChild(b);
+      b.addEventListener('click', () => { if (b._lp) return; k10Open(m.id, tab); });
+      attachLongPress(b, () => k10Pop(m, tab, b));           // press and hold: Resend or Delete
+      body.appendChild(b);
     });
   } catch (e) {
     body.textContent = (e.message || "Couldn't open the mailbox.") + ' ';
@@ -2139,8 +2292,11 @@ window.addEventListener('blur', () => sendPresence(true));
 window.addEventListener('focus', () => sendPresence(isAway()));
 document.addEventListener('pointerdown', () => { if (lastPresence) sendPresence(isAway()); }, true);
 
-// ---- notifications: "your reply is ready", even after you have left the app (Web Push) ----
-const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+// ---- notifications: "your reply is ready", even after you have left the app ----
+// Android app: Firebase Cloud Messaging (FCM) through the PushNotifications plugin. Web page: browser Web Push.
+const nativePush = nativePlugin('PushNotifications');
+const webPushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const pushSupported = webPushSupported;
 const urlB64ToBytes = (s) => {
   const raw = atob((s + '='.repeat((4 - (s.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
@@ -2148,27 +2304,44 @@ const urlB64ToBytes = (s) => {
 async function getPushSub() {
   try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch (e) { return null; }
 }
-let notifyMode = 'webpush';          // 'ntfy' when the server is set up to send through the ntfy app
-let ntfyOn = false;
+const FCM_STORE = 'beta_fcm';
+let fcmListening = false;
+async function saveFcmToken(tok) {
+  if (!tok) return;
+  store.set(FCM_STORE, tok);
+  try { await api('/api/fcm/register', { method: 'POST', body: { token: tok } }); } catch (e) { /* retried the next time the app opens */ }
+}
+async function fcmPermission(ask) {
+  let p = await nativePush.checkPermissions();
+  if (p.receive !== 'granted' && ask) p = await nativePush.requestPermissions();      // must come straight from the tap
+  return p.receive === 'granted';
+}
+async function startFcm() {
+  if (!fcmListening) {
+    fcmListening = true;
+    nativePush.addListener('registration', (t) => saveFcmToken(t && t.value));
+    nativePush.addListener('registrationError', (e) => toast('Notifications could not start: ' + ((e && e.error) || 'unknown error'), true));
+  }
+  try { await nativePush.createChannel({ id: 'beta_replies', name: 'Replies', description: 'When a reply is ready', importance: 4, visibility: 1, vibration: true }); } catch (e) { /* older Android has no channels */ }
+  await nativePush.register();
+}
 async function refreshNotifyMenu() {
   if (ME && !ME.owner) { $('m-notify').classList.add('hidden'); return; }          // friends have no notification keys
-  let info = null;
-  try { info = await api('/api/notify/info'); } catch (e) { /* offline: fall back to browser push */ }
-  if (info && info.ntfy) {
-    notifyMode = 'ntfy'; ntfyOn = !!info.ntfy_on;
+  const row = (v) => menuRow('m-notify-text', 'Notify me when a reply is ready', v, v === 'on' ? 'good' : '');
+  if (NATIVE) {
     $('m-notify').classList.remove('hidden');
-    setIcon($('m-notify-icon'), ntfyOn ? 'bell' : 'bell-off');
-    let last = '';
-    if (ntfyOn && info.last) last = info.last.ok ? ' - last alert sent ' + agoText(info.last.ago) : ' - last alert FAILED (' + info.last.detail + ')';
-    $('m-notify-text').textContent = 'Notify me when a reply is ready (ntfy): ' + (ntfyOn ? 'on' : 'off') + last;
+    if (!nativePush) { setIcon($('m-notify-icon'), 'bell-off'); row('update the app'); return; }
+    let on = false;
+    try { on = !!store.get(FCM_STORE) && await fcmPermission(false); } catch (e) { /* treated as off */ }
+    setIcon($('m-notify-icon'), on ? 'bell' : 'bell-off');
+    row(on ? 'on' : 'off');
     return;
   }
-  notifyMode = 'webpush';
-  if (!pushSupported) { $('m-notify').classList.add('hidden'); return; }
+  if (!webPushSupported) { $('m-notify').classList.add('hidden'); return; }
   $('m-notify').classList.remove('hidden');
   const on = Notification.permission === 'granted' && !!(await getPushSub());
   setIcon($('m-notify-icon'), on ? 'bell' : 'bell-off');
-  $('m-notify-text').textContent = 'Notify me when a reply is ready: ' + (on ? 'on' : 'off');
+  row(on ? 'on' : 'off');
 }
 async function enablePush() {
   const { key } = await api('/api/push/key');
@@ -2189,16 +2362,32 @@ async function disablePush(sub) {
 // Opened the app with notifications already on: make sure the server still has this phone saved.
 async function syncPushSub() {
   if (ME && !ME.owner) return;
-  if (!pushSupported || Notification.permission !== 'granted') return;
+  if (NATIVE) {
+    if (nativePush && store.get(FCM_STORE)) { try { if (await fcmPermission(false)) await startFcm(); } catch (e) { /* ignore */ } }
+    return;
+  }
+  if (!webPushSupported || Notification.permission !== 'granted') return;
   const sub = await getPushSub();
   if (sub) api('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } }).catch(() => {});
 }
 $('m-notify').addEventListener('click', async () => {
-  if (notifyMode === 'ntfy') {                 // the server sends through the ntfy app; this just switches it on or off
+  if (NATIVE) {
+    if (!nativePush) { toast('Reply alerts need the newest version of the app. Install the latest APK.', true); return; }
     try {
-      await api('/api/notify/ntfy', { method: 'POST', body: { on: !ntfyOn } });
-      toast(!ntfyOn ? 'Notifications on - they arrive in the ntfy app' : 'Notifications off');
-    } catch (e) { toast(e.message || 'Could not change notifications.', true); }
+      const have = store.get(FCM_STORE);
+      if (have) {                                                                    // on -> off
+        try { await api('/api/fcm/unregister', { method: 'POST', body: { token: have } }); } catch (e) { /* ignore */ }
+        store.set(FCM_STORE, '');
+        toast('Notifications off');
+      } else {
+        const info = await api('/api/notify/info');
+        if (!info.fcm) { toast('The server has no Firebase key yet (FIREBASE_SERVICE_ACCOUNT on Render).', true); return; }
+        if (!(await fcmPermission(true))) { toast('Notifications are blocked for B.E.T.A. - allow them in the phone settings: Apps > B.E.T.A. > Notifications.', true); return; }
+        await startFcm();
+        setTimeout(() => api('/api/push/test', { method: 'POST', body: {} }).catch(() => {}), 2500);   // a test alert once the phone is registered
+        toast('Notifications on');
+      }
+    } catch (e) { toast((e && e.message) || 'Could not change notifications.', true); }
     refreshNotifyMenu();
     return;
   }
@@ -2208,11 +2397,11 @@ $('m-notify').addEventListener('click', async () => {
     const sub = await getPushSub();
     if (sub) await disablePush(sub);
     else if (perm === 'granted') await enablePush();
-    else toast('Notifications are blocked for B.E.T.A. - allow them in Firefox: tap the lock icon in the address bar > Permissions.', true);
+    else toast('Notifications are blocked for B.E.T.A. - allow them in the browser: tap the lock icon in the address bar > Permissions.', true);
   } catch (e) {
     const m = String((e && e.message) || e || '');
     toast(/push (service|subscription)/i.test(m)
-      ? "This browser has no push service (common on Fennec). Use the ntfy option instead: set NTFY_TOPIC on the server."
+      ? 'This browser has no push service (common on Fennec). Use the B.E.T.A. Android app to get reply alerts.'
       : (m || 'Could not change notifications.'), true);
   }
   refreshNotifyMenu();
@@ -2294,11 +2483,8 @@ async function checkVersion(info) {
 }
 
 async function waitForServer() {
-  // A sleeping Render server doesn't refuse the request - it just leaves it hanging for up to a minute.
-  // So the explanation is shown on a timer (after 3 seconds), not after a failed attempt.
-  const explain = setTimeout(() => {
-    $('wake-text').textContent = 'Waking B.E.T.A. up… the free server sleeps when idle, this can take up to a minute.';
-  }, 3000);
+  // A sleeping Render server doesn't refuse the request - it just leaves it hanging, so this keeps asking until it
+  // answers. The screen only says "Connecting…" (no explanation about free servers).
   for (;;) {
     try {
       const ctrl = new AbortController();
@@ -2306,7 +2492,6 @@ async function waitForServer() {
       const res = await fetch('/api/health', { cache: 'no-store', signal: ctrl.signal });
       clearTimeout(t);
       if (res.ok) {
-        clearTimeout(explain);
         let info = null;
         try { info = await res.json(); } catch (e) { /* older server */ }
         await checkVersion(info);
@@ -2356,6 +2541,7 @@ async function startApp(fromId) {
   updateUsage(st.usage);
   scrollDown(true);
   syncPushSub();
+  startK10Watch();
   lastPresence = null; sendPresence(isAway());
   if (st.active_job) {            // a reply was still being worked on when the page reloaded
     currentJob = st.active_job;
@@ -2424,7 +2610,7 @@ function applyAccount(user) {
   const friend = !ME.owner;
   $('m-friends').classList.toggle('hidden', friend);
   ['m-key', 'm-export', 'm-delete'].forEach((id) => $(id).classList.toggle('hidden', !friend));
-  $('m-key-text').textContent = ME.own_key ? 'My own key: on (' + (ME.own_key_mask || 'saved') + ')' : 'Use my own free key';
+  if (ME.own_key) menuRow('m-key-text', 'My own key', 'on', 'good'); else menuRow('m-key-text', 'Use my own free key');
   if (friend) { $('m-termux').classList.add('hidden'); $('m-k10').classList.add('hidden'); $('m-notify').classList.add('hidden'); }   // tied to the owner's phone, desktop and server keys
   loadVoice();                                            // this account's saved read-aloud voice
 }

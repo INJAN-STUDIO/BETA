@@ -533,3 +533,28 @@ html[data-theme="lavender"] .iv-chip.on { color: #ffffff; }
 .sr-actions .sheet-close:first-child { margin-left: 0; }
 #traffic-note { flex-shrink: 0; margin-top: 8px; font-size: calc(13px * var(--ts, 1)); color: var(--dim); }
 #traffic-banner { flex-shrink: 0; }
+
+/* ====================================================================
+ * v5.0: a neater menu (sections + value chips), the press-and-hold pop-up, the new-mail dot
+ * ==================================================================== */
+.menu-h { margin: 16px 8px 4px; font-size: calc(11.5px * var(--ts, 1)); font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.menu-scroll > .menu-h:first-child { margin-top: 2px; }
+.sheet-item .mi { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; }
+.mi-label { flex: 1 1 auto; min-width: 0; }
+.mi-val { flex: none; max-width: 55%; margin-left: 10px; padding: 3px 11px; border-radius: 999px; font-size: calc(12.5px * var(--ts, 1)); font-weight: 700;
+  color: var(--accent-2); background: rgba(127,127,127,0.16); border: 1px solid rgba(127,127,127,0.3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mi-val.good { color: var(--ok, #3ddc97); background: rgba(61,220,151,0.14); border-color: rgba(61,220,151,0.42); }
+.mi-val.bad { color: var(--danger); background: rgba(254,79,95,0.12); border-color: rgba(254,79,95,0.42); }
+.mi-val.accent { color: #fff; background: var(--accent); border-color: transparent; }
+
+#confirm { z-index: 70; }                                  /* a confirm box shows above the K-10 mail screen it was opened from */
+.icon-btn { position: relative; }
+.icon-btn.dot::after { content: ''; position: absolute; top: 5px; right: 5px; width: 11px; height: 11px; border-radius: 50%; background: var(--accent-2); border: 2px solid var(--bg); }
+
+.pop-ov { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 80; background: rgba(0,0,0,0.28); }
+.pop { position: absolute; min-width: 210px; padding: 6px; border-radius: 16px; background: var(--panel); border: 1px solid var(--border); box-shadow: 0 12px 34px rgba(0,0,0,0.55); animation: fadeIn 0.15s ease both; }
+.pop button { display: flex; align-items: center; width: 100%; padding: 13px 12px; border: none; background: none; color: var(--text); text-align: left; border-radius: 11px; font-size: calc(15.5px * var(--ts, 1)); }
+.pop button:active { background: rgba(127,127,127,0.22); }
+.pop button.danger { color: var(--danger); }
+.pop .ui-icon { font-size: 19px; margin-right: 12px; color: inherit; }
+.k10-item { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
