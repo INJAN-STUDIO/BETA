@@ -12,11 +12,98 @@ const CLIENT_VERSION = (() => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------------------
+// Sound effects (v5.1): tiny soft sounds made by the phone itself (Web Audio), so there are no sound files to download.
+// They stay silent while B.E.T.A. is reading a reply aloud, while the app is in the background, and when switched off.
+// ---------------------------------------------------------------------------
+const sfx = (() => {
+  const LEVELS = [0.35, 0.6, 0.9], LEVEL_NAMES = ['Low', 'Medium', 'High'];
+  const get = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
+  const put = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } };
+  let ctx = null, master = null, last = 0;
+  let on = get('beta_sfx', '1') === '1';
+  let level = parseInt(get('beta_sfx_vol', '1'), 10); if (!(level >= 0 && level <= 2)) level = 1;
+  const PRIORITY = { error: 1, reply: 1, mail: 1 };                  // these are never skipped just because another sound just played
+
+  function audio() {
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      try { ctx = new AC(); master = ctx.createGain(); master.connect(ctx.destination); } catch (e) { ctx = null; return null; }
+    }
+    master.gain.value = Math.pow(LEVELS[level], 2) * 0.9;
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* needs a tap first */ } }
+    return ctx;
+  }
+  const voiceBusy = () => {
+    try { return (typeof ttsAudio !== 'undefined' && !ttsAudio.paused) || (window.speechSynthesis && speechSynthesis.speaking); } catch (e) { return false; }
+  };
+  // One tone: the pitch glides from f1 to f2 with a quick attack and a smooth fade.
+  function tone(c, o) {
+    const t0 = c.currentTime + (o.at || 0), end = t0 + o.dur, osc = c.createOscillator(), g = c.createGain();
+    osc.type = o.type || 'sine';
+    osc.frequency.setValueAtTime(o.f1, t0);
+    if (o.f2) osc.frequency.exponentialRampToValueAtTime(o.f2, end);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(o.gain || 0.2, t0 + Math.min(0.012, o.dur / 4));
+    g.gain.exponentialRampToValueAtTime(0.0001, end);
+    osc.connect(g); g.connect(master);
+    if (o.echo) { const d = c.createDelay(0.5); d.delayTime.value = 0.13; const fb = c.createGain(); fb.gain.value = 0.3; g.connect(d); d.connect(fb); fb.connect(d); d.connect(master); }
+    osc.start(t0); osc.stop(end + (o.echo ? 0.8 : 0.05));
+  }
+  const SOUNDS = {
+    tap:   (c) => tone(c, { f1: 520, f2: 470, dur: 0.07, gain: 0.22 }),
+    send:  (c) => tone(c, { f1: 420, f2: 700, dur: 0.16, gain: 0.26 }),
+    reply: (c) => { tone(c, { f1: 660, dur: 0.18, gain: 0.22 }); tone(c, { f1: 880, dur: 0.3, gain: 0.2, at: 0.1 }); },
+    error: (c) => { tone(c, { f1: 240, f2: 190, dur: 0.22, type: 'triangle', gain: 0.3 }); tone(c, { f1: 200, f2: 160, dur: 0.28, type: 'triangle', gain: 0.28, at: 0.15 }); },
+    on:    (c) => tone(c, { f1: 520, f2: 760, dur: 0.1, gain: 0.22 }),
+    off:   (c) => tone(c, { f1: 560, f2: 380, dur: 0.1, gain: 0.22 }),
+    // More soft sounds (v5.1)
+    open:  (c) => tone(c, { f1: 430, f2: 560, dur: 0.09, gain: 0.14 }),
+    close: (c) => tone(c, { f1: 520, f2: 390, dur: 0.08, gain: 0.12 }),
+    copy:  (c) => { tone(c, { f1: 700, dur: 0.04, gain: 0.14 }); tone(c, { f1: 930, dur: 0.06, gain: 0.14, at: 0.05 }); },
+    micOn: (c) => tone(c, { f1: 480, f2: 720, dur: 0.11, gain: 0.2 }),
+    micOff:(c) => tone(c, { f1: 700, f2: 470, dur: 0.11, gain: 0.18 }),
+    mail:  (c) => { tone(c, { f1: 784, dur: 0.14, gain: 0.2, echo: true }); tone(c, { f1: 1047, dur: 0.26, gain: 0.18, at: 0.12, echo: true }); },
+    theme: (c) => { tone(c, { f1: 400, f2: 800, dur: 0.18, gain: 0.16 }); tone(c, { f1: 600, f2: 900, dur: 0.14, gain: 0.08, at: 0.06 }); },
+    pop:   (c) => tone(c, { f1: 350, f2: 520, dur: 0.07, type: 'triangle', gain: 0.2 }),
+  };
+  function play(name, force) {
+    if (!on && !force) return;
+    if (!force && (document.hidden || voiceBusy())) return;
+    const f = SOUNDS[name]; if (!f) return;
+    const now = Date.now();
+    if (!force && !PRIORITY[name] && now - last < 110) return;     // one tap should not set off a pile of sounds
+    const c = audio(); if (!c) return;
+    last = now;
+    try { f(c); } catch (e) { /* a sound must never break the app */ }
+  }
+  return {
+    play,
+    get enabled() { return on; },
+    setEnabled(v) { on = !!v; put('beta_sfx', on ? '1' : '0'); },
+    get levelName() { return LEVEL_NAMES[level]; },
+    cycleLevel() { level = (level + 1) % 3; put('beta_sfx_vol', String(level)); play('tap', true); },
+  };
+})();
+// One soft tap for any button, unless that button makes its own sound. Runs before the button's own handler (capture), so
+// "busy" still describes the moment you pressed.
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('button, .sheet-item, [role="button"], .k10-item');
+  if (!b || b.disabled) return;
+  if (b.classList.contains('copy-btn')) { sfx.play('copy'); return; }
+  if (b.classList.contains('listen-btn') || b.classList.contains('thm-row')) return;
+  if (b.id === 'send-btn') { if (busy) sfx.play('tap'); return; }               // sending plays its own sound
+  if (b.id === 'mic-btn' || b.id === 'm-voice' || b.id === 'm-sound' || b.id === 'm-soundvol') return;      // these play their own sounds
+  sfx.play('tap');
+}, true);
+
+// ---------------------------------------------------------------------------
 // Icons (inline SVG - no emoji fonts, no downloads)
 // ---------------------------------------------------------------------------
 const ICONS = {
   menu: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   clip: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>',
+  wave: '<path d="M3 10v4M7.5 7v10M12 4v16M16.5 8v8M21 11v2"/>',
   mic: '<path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/>',
   send: '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
@@ -85,6 +172,7 @@ async function api(path, { method = 'GET', body } = {}) {
 
 let toastTimer = null;
 function toast(msg, failed, ms) {
+  if (failed) sfx.play('error');
   const t = $('toast');
   t.textContent = msg;
   t.classList.toggle('failed', !!failed);
@@ -474,6 +562,7 @@ function startTyping(el, root, onDone) {
 }
 
 function addMessage(role, text, animate) {
+  if (role === 'error') sfx.play('error');
   const el = document.createElement('div');
   el.className = 'msg ' + (role === 'user' ? 'user' : role === 'error' ? 'ai error' : 'ai');
   let typing = null;
@@ -1099,14 +1188,14 @@ if (nativeSpeech) {
       let perm = await nativeSpeech.checkPermissions();
       if (!perm || perm.speechRecognition !== 'granted') perm = await nativeSpeech.requestPermissions();
       if (!perm || perm.speechRecognition !== 'granted') { toast('Microphone permission was not given. You can allow it in the phone settings for B.E.T.A.', true); return; }
-      listening = true; $('mic-btn').classList.add('active');
+      sfx.play('micOn'); listening = true; $('mic-btn').classList.add('active');
       const r = await nativeSpeech.start({ language: navigator.language || 'en-US', maxResults: 1, partialResults: false, popup: false });
       const text = r && r.matches && r.matches[0];
       if (text) { $('input').value = text; autosize(); send(); }
       else toast("Didn't catch that. Tap the microphone and try again.");
     } catch (e) {
       toast("Voice input didn't work: " + ((e && e.message) || 'unknown problem') + '. You can use the microphone on your keyboard instead.', true);
-    } finally { listening = false; $('mic-btn').classList.remove('active'); }
+    } finally { sfx.play('micOff'); listening = false; $('mic-btn').classList.remove('active'); }
   });
 } else if (NATIVE) {
   $('mic-btn').classList.remove('hidden');
@@ -1118,9 +1207,9 @@ if (nativeSpeech) {
     recog = new Recognition();
     recog.lang = navigator.language || 'en-US';
     recog.interimResults = true;
-    recog.onstart = () => { listening = true; $('mic-btn').classList.add('active'); };
-    recog.onend = () => { listening = false; $('mic-btn').classList.remove('active'); };
-    recog.onerror = () => { listening = false; $('mic-btn').classList.remove('active'); };
+    recog.onstart = () => { sfx.play('micOn'); listening = true; $('mic-btn').classList.add('active'); };
+    recog.onend = () => { sfx.play('micOff'); listening = false; $('mic-btn').classList.remove('active'); };
+    recog.onerror = () => { sfx.play('micOff'); listening = false; $('mic-btn').classList.remove('active'); };
     recog.onresult = (ev) => {
       let text = '', final = false;
       for (let i = 0; i < ev.results.length; i++) { text += ev.results[i][0].transcript; if (ev.results[i].isFinal) final = true; }
@@ -1294,6 +1383,7 @@ async function send() {
   const videos = pendingVideos.map((v) => v.id);
   finishAllTyping();                                  // show any reply that's still typing, in full
   stopSpeaking();
+  sfx.play('send');
   const bubble = addMessage('user', text);
   if (files.length) {
     const note = document.createElement('span'); note.className = 'attach-note';
@@ -1365,6 +1455,7 @@ function handleEvent(ev) {
     // The Copy button also has the "listen-btn" class (for its look), so pick the real Listen button explicitly -
     // otherwise Copy is the one that turns into "Listen / Stop" while a reply is read aloud.
     if (voiceOn) speak(ev.text, bubble.querySelector('.listen-btn:not(.copy-btn)'));
+    else sfx.play('reply');                                  // (when reading aloud, the voice is the signal)
   }
   else if (ev.type === 'error') addMessage('error', ev.text);
   else if (ev.type === 'notice') addNotice(ev.text);
@@ -1403,8 +1494,8 @@ $('send-btn').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 // Menu + memory panel
 // ---------------------------------------------------------------------------
-const show = (id) => $(id).classList.remove('hidden');
-const hide = (id) => $(id).classList.add('hidden');
+const show = (id) => { const el = $(id); if (el.classList.contains('overlay') && el.classList.contains('hidden')) sfx.play('open'); el.classList.remove('hidden'); };
+const hide = (id) => { const el = $(id); if (el.classList.contains('overlay') && !el.classList.contains('hidden')) sfx.play('close'); el.classList.add('hidden'); };
 $('menu-btn').addEventListener('click', () => { refreshVoiceMenu(); refreshNotifyMenu(); refreshTermuxMenu(); refreshModelMenu(); refreshK10Menu(); show('menu'); });
 $('menu-close').addEventListener('click', () => hide('menu'));
 $('menu').addEventListener('click', (e) => { if (e.target === $('menu')) hide('menu'); });
@@ -1465,6 +1556,7 @@ function setTheme(id, persist) {
   const root = document.documentElement;
   root.classList.add('theme-anim'); setTimeout(() => root.classList.remove('theme-anim'), 450);   // smooth cross-fade
   applyTheme();
+  if (persist !== false) sfx.play('theme');
 }
 function openThemes() {
   const body = $('themes-body'); body.textContent = '';
@@ -1490,7 +1582,21 @@ $('m-voice').addEventListener('click', () => {
   voiceOn = !voiceOn; store.set('beta_voice', voiceOn ? '1' : '0');
   if (!voiceOn) stopSpeaking();
   refreshVoiceMenu();
+  sfx.play(voiceOn ? 'on' : 'off');
 });
+
+// Sound effects: an on/off row and a Low / Medium / High row.
+function refreshSoundMenu() {
+  menuRow('m-sound-text', 'Sound effects', sfx.enabled ? 'on' : 'off', sfx.enabled ? 'good' : '');
+  menuRow('m-soundvol-text', 'Sound volume', sfx.levelName);
+  $('m-soundvol').classList.toggle('dim', !sfx.enabled);
+}
+$('m-sound').addEventListener('click', () => {
+  if (sfx.enabled) { sfx.play('off', true); sfx.setEnabled(false); } else { sfx.setEnabled(true); sfx.play('on', true); }
+  refreshSoundMenu();
+});
+$('m-soundvol').addEventListener('click', () => { if (!sfx.enabled) { sfx.setEnabled(true); } sfx.cycleLevel(); refreshSoundMenu(); });
+refreshSoundMenu();
 
 // ---------------------------------------------------------------------------
 // File download cards, Termux approval cards, and "only one live tab"
@@ -1983,6 +2089,7 @@ function popMenu(anchor, items) {
   ov.appendChild(card);
   ov.addEventListener('click', () => { if (Date.now() - opened > 350) close(); });      // ignore the finger lifting from the press
   document.body.appendChild(ov);
+  sfx.play('pop');
   const r = anchor.getBoundingClientRect(), vh = window.innerHeight, ch = card.offsetHeight || 110;
   let top = r.bottom + 6; if (top + ch > vh - 12) top = Math.max(12, r.top - ch - 6);
   card.style.top = top + 'px';
@@ -2023,6 +2130,7 @@ async function k10Watch() {
     $('menu-btn').classList.toggle('dot', d.new > 0);
     if (k10Seen != null && d.new > k10Seen) {
       toast('New mail from ALPHA - open Menu, then K-10 mail', false, 4500);
+      sfx.play('mail');
       try { if (navigator.vibrate) navigator.vibrate([40, 60, 40]); } catch (e) { /* ignore */ }
     }
     k10Seen = d.new;

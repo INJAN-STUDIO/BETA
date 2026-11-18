@@ -1,4 +1,15 @@
-# B.E.T.A. 5.0 - deploy guide
+# B.E.T.A. 5.1 - deploy guide
+
+NEW in 5.1: soft sound effects (taps, send, reply arrives, errors, switches, menus opening and closing, copy, mic on/off,
+new K-10 mail, theme change, press-and-hold menu). Menu -> "Sound effects" (on/off) and "Sound volume" (Low / Medium / High).
+They are made by the phone itself, so there are no sound files. They stay silent while B.E.T.A. reads a reply aloud, while the
+app is in the background, and when switched off. Nothing needs setting up on the server for this.
+
+Everything from 5.0 is included in this zip (Firebase alerts, K-10 mail menu, tidier menu, 8 new themes, natural read-aloud).
+If you have NOT deployed 5.0 yet, follow the steps below as written (the Firebase part is step 2). If you already deployed
+5.0 and Firebase is set up, you only need steps 1, 3 and a hard refresh: just replace the files and push.
+
+Version number to look for: 5.1 (APP_VERSION is already bumped in app.py).
 
 What is new: reply alerts through Firebase (FCM) instead of ntfy, an alert + in-app notice for new K-10 mail, press-and-hold
 on a mail message for Resend / Delete, a tidier menu, 8 new colour themes, the loading screen no longer explains the free
@@ -23,9 +34,9 @@ gemini_status.py is unchanged.
 
 ## 3. Commit and push, then check it is live
 git add app.py fcm_push.py speech_text.py system_report.py capacitor.config.json static/ android/
-git commit -m "B.E.T.A. 5.0: FCM alerts, K-10 mail menu, tidier menu, more themes, natural read-aloud" && git push
-- https://beta-033v.onrender.com/api/health  -> "version":"5.0"
-- https://beta-033v.onrender.com/static/app.js -> search: nativePush   and   attachLongPress   and   speakable
+git commit -m "B.E.T.A. 5.1: sound effects (plus 5.0: FCM alerts, K-10 mail menu, tidier menu, more themes, natural read-aloud)" && git push
+- https://beta-033v.onrender.com/api/health  -> "version":"5.1"
+- https://beta-033v.onrender.com/static/app.js -> search: sfx   and   nativePush   and   attachLongPress   and   speakable
 - https://beta-033v.onrender.com/static/themes.css -> search: v5.0 MORE THEMES
 If a phone still looks old, open https://beta-033v.onrender.com/reset once.
 

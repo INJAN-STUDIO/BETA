@@ -558,3 +558,6 @@ html[data-theme="lavender"] .iv-chip.on { color: #ffffff; }
 .pop button.danger { color: var(--danger); }
 .pop .ui-icon { font-size: 19px; margin-right: 12px; color: inherit; }
 .k10-item { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+
+/* v5.1: the Sound volume row looks switched off while sound effects are off */
+.sheet-item.dim { opacity: 0.55; }
